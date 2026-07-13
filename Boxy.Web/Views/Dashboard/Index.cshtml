@@ -1,0 +1,239 @@
+@model AdminDashboardViewModel
+@{
+    ViewData["Title"] = "Boxy";
+    var bucketNames = Model.Buckets.ToDictionary(b => b.Id, b => b.Name);
+    var tab = ViewData["Tab"] as string == "boxes" ? "boxes" : "shares";
+    var newUpload = new UploaderVm
+    {
+        Action = "/dashboard/upload",
+        ChunkUrl = "/dashboard/upload/chunk",
+        CompleteUrl = "/dashboard/upload/complete",
+        Reload = true,
+        Multiple = true,
+        InputName = "files",
+        Title = "Drop files here",
+        Hint = "or click to browse. Any size, several at once",
+        ButtonText = "Upload",
+        KeepOriginalOption = true,
+        MaxBytes = Model.MaxUploadBytes
+    };
+}
+
+@{ var header = new PageHeader { Title = "Dashboard", Icon = PageIcon.Dashboard }; }
+<partial name="_PageHeader" model="header"/>
+<div class="admin-tabs mb-4">
+    <a href="/dashboard" class="admin-tab @(tab == "shares" ? "is-active" : "")">Shares</a>
+    <a href="/dashboard?tab=boxes" class="admin-tab @(tab == "boxes" ? "is-active" : "")">Boxes</a>
+</div>
+
+@if (Model.QuotaBytes > 0)
+{
+    var pct = (int)Math.Min(100, Model.UsageBytes * 100 / Model.QuotaBytes);
+    var over = Model.UsageBytes >= Model.QuotaBytes;
+    <div class="mb-4" style="max-width: 32rem;">
+        <div class="d-flex justify-content-between small text-secondary mb-1">
+            <span>Storage used</span>
+            <span>@Format.Bytes(Model.UsageBytes) of @Format.Bytes(Model.QuotaBytes)</span>
+        </div>
+        <div class="progress" role="progressbar" aria-valuenow="@pct" aria-valuemin="0" aria-valuemax="100"
+             style="height:.5rem;">
+            <div class="progress-bar"
+                 style="width:@pct%; background:@(over ? "#b3423a" : "var(--brand-deep, #bd7811)");"></div>
+        </div>
+    </div>
+}
+
+@if (tab == "boxes")
+{
+    @* ── Boxes: drop-off links others upload into ────────────────────────────── *@
+    <div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+        <h2 class="h5 mb-0">Boxes</h2>
+        <form method="post" action="/dashboard/buckets/create" class="d-flex gap-2">
+            @Html.AntiForgeryToken()
+            <input type="text" name="name" class="form-control form-control-sm" placeholder="New box name" required/>
+            <button type="submit" class="btn btn-sm btn-primary">Create</button>
+        </form>
+    </div>
+    <p class="text-secondary small">Share a box link and anyone can drop files in for you to collect.</p>
+
+    @if (Model.Buckets.Count == 0)
+    {
+        <partial name="_EmptyState" model='"No boxes yet. Name one above and share its link."'/>
+    }
+    else
+    {
+        <div class="box-grid mb-4">
+            @foreach (var bucket in Model.Buckets)
+            {
+                var count = Model.BucketCounts.GetValueOrDefault(bucket.Id, 0);
+                <div class="box-card">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                        <a href="/dashboard/buckets/@bucket.Id" class="box-card__name">
+                            <svg class="box-card__ico" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                                 aria-hidden="true">
+                                <path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/>
+                                <path d="M3 8l9 5 9-5"/>
+                                <path d="M12 13v8"/>
+                            </svg>
+                            <span class="text-truncate">@bucket.Name</span>
+                        </a>
+                        <span
+                            class="stamp @(bucket.IsOpen ? "stamp--open" : "stamp--closed")">@(bucket.IsOpen ? "Open" : "Closed")</span>
+                    </div>
+                    <div class="box-card__meta mb-1"><span
+                            class="stamp stamp--count">@count file@(count == 1 ? "" : "s")</span> · created
+                        <partial name="_TimeAgo" model="bucket.CreatedDate"/>
+                        <partial name="_ExpiryBadge" model="bucket.ExpiresAt"/>
+                    </div>
+                    <a href="@Model.BaseUrl/u/@bucket.Slug" class="box-card__label d-block">/u/@bucket.Slug</a>
+                    <div class="box-card__actions">
+                        <a href="/dashboard/buckets/@bucket.Id" class="btn btn-sm btn-outline-primary">Open</a>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                data-copy="@Model.BaseUrl/u/@bucket.Slug" data-copy-label="Copied!">Copy link
+                        </button>
+                        <form method="post" action="/dashboard/buckets/@bucket.Id/delete"
+                              data-confirm="Delete this box? Files dropped into it are kept in your drop-off files."
+                              data-confirm-label="Delete box">
+                            @Html.AntiForgeryToken()
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                        </form>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @* ── Drop-off files ─────────────────────────────────────────────────────── *@
+    <div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2 mt-4">
+        <h2 class="h5 mb-0">Drop-off files</h2>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <partial name="_FilterBar" model='new FilterBarVm(Model.FilesFilter, Model.FileKindCounts, "ft", "fp")'/>
+            <partial name="_SortBar" model='new SortBarVm(MediaSort.Files, Model.Files.Sort, "fs", "fp")'/>
+        </div>
+    </div>
+    <p class="text-secondary small">Dropped into your boxes by others. Yours to download, not shared.</p>
+
+    @if (Model.Files.Total == 0)
+    {
+        <partial name="_EmptyState" model='Model.FilesFilter.IsEmpty ? "No drop-off files yet. Share a box link to collect files here." : "No drop-off files match this filter."'/>
+    }
+    else
+    {
+        <div data-bulk>
+            <partial name="_BulkBar"
+                     model='new BulkBarVm { ReturnUrl = Context.Request.Path + Context.Request.QueryString, ShowDownload = true, DeleteConfirm = "Delete the selected drop-off files? This cannot be undone." }'/>
+            <div class="card">
+                <div class="card-body">
+                    <ul class="list-group">
+                        @foreach (var m in Model.Files.Items)
+                        {
+                            var bn = m.BucketId is int bid && bucketNames.TryGetValue(bid, out var name) ? name : null;
+                            <partial name="_DropFileRow" model="new DropFileRow(m, bn)"/>
+                        }
+                    </ul>
+                    <partial name="_Pager" model='PagerVm.For(Model.Files, "fp", "files")'/>
+                </div>
+            </div>
+        </div>
+    }
+}
+else
+{
+    @* ── Upload a new share ──────────────────────────────────────────────────── *@
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2 class="h5 card-title mb-1">Upload a file</h2>
+            <p class="text-secondary small">Published immediately with a public link.</p>
+            <partial name="_Uploader" model="newUpload"/>
+        </div>
+    </div>
+
+    @* ── Shares: files you've uploaded, each with a public link ──────────────── *@
+    <div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+        <h2 class="h5 mb-0">Shares</h2>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <partial name="_FilterBar" model='new FilterBarVm(Model.VideosFilter, Model.VideoKindCounts, "vt", "vp")'/>
+            <partial name="_SortBar" model='new SortBarVm(MediaSort.Shares, Model.Videos.Sort, "vs", "vp")'/>
+        </div>
+    </div>
+    <p class="text-secondary small">Files you've uploaded, shareable with a link.</p>
+
+    @if (Model.Videos.Total == 0)
+    {
+        <partial name="_EmptyState" model='Model.VideosFilter.IsEmpty ? "No shares yet. Upload a file above to get a share link." : "No shares match this filter."'/>
+    }
+    else
+    {
+        <div data-bulk>
+            <partial name="_BulkBar"
+                     model='new BulkBarVm { ReturnUrl = Context.Request.Path + Context.Request.QueryString, DeleteConfirm = "Delete the selected shares? This cannot be undone." }'/>
+            <div class="film-grid">
+                @foreach (var m in Model.Videos.Items)
+                {
+                    <div class="film-card">
+                        <label class="film-card__select" title="Select"><input type="checkbox"
+                                                                               class="bulk-check form-check-input"
+                                                                               value="@m.Id" aria-label="Select share"/></label>
+                        <a href="@ShareUrls.Path(m, Model.OwnerUsername, Model.OwnerIsAdmin)" target="_blank"
+                           class="film-card__thumb">
+                            @if (m.PosterFileName is not null)
+                            {
+                                <img src="/poster/@m.Slug?v=@m.PosterVersion()" class="thumb-16x9" alt=""
+                                     loading="lazy"/>
+                            }
+                            else
+                            {
+                                <div class="film-card__ph film-card__ph--@m.Kind.ToString().ToLowerInvariant()">
+                                    <i class="bi @MediaKinds.IconClass(m.Kind)"></i>
+                                    <span class="film-card__ph-ext">@m.Extension.TrimStart('.').ToUpperInvariant()</span>
+                                </div>
+                            }
+                        </a>
+                        <div class="film-card__body">
+                            <div class="film-card__title text-truncate">@m.Title</div>
+                            <div class="film-card__meta">
+                                @{ var vst = MediaKinds.StatusStamp(m.Status); }
+                                <span class="stamp @vst.Cls">@vst.Text</span>
+                                <span
+                                    class="stamp @(m.Published ? "stamp--pub" : "stamp--draft")">@(m.Published ? "Published" : "Draft")</span>
+                                @if (m.Published)
+                                {
+                                    <span class="stamp stamp--count">@m.Views view@(m.Views == 1 ? "" : "s")</span>
+                                }
+                                @if (m.SharePasswordHash is not null)
+                                {
+                                    <span class="stamp stamp--pub" title="Password protected">Password</span>
+                                }
+                                <partial name="_ExpiryBadge" model="m.ExpiresAt"/>
+                                @if (Format.Dimensions(m.Width, m.Height) is { Length: > 0 } dim)
+                                {
+                                    <span class="stamp stamp--count">@dim</span>
+                                }
+                                @if (m.CapturedAt is { } cap)
+                                {
+                                    <span class="stamp stamp--count" title="Original date from the file's own metadata">@cap.ToString("d MMM yyyy")</span>
+                                }
+                            </div>
+                            <div class="small mb-2">Uploaded
+                                <partial name="_TimeAgo" model="m.CreatedDate"/>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <a href="/dashboard/media/@m.Id" class="btn btn-sm btn-outline-primary">Edit</a>
+                                <form method="post" action="/dashboard/media/@m.Id/delete"
+                                      data-confirm="Delete this share? This can’t be undone."
+                                      data-confirm-label="Delete share">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+            <partial name="_Pager" model='PagerVm.For(Model.Videos, "vp", "shares")'/>
+        </div>
+    }
+
+    <script src="/js/upload.js" asp-append-version="true"></script>
+}

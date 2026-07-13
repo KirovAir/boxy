@@ -1,0 +1,24 @@
+@model BulkBarVm
+@* Sits inside a [data-bulk] scope. boxy.js reveals the bar once items are selected and mirrors the
+   checked ids into each [data-bulk-action] form as `ids` fields. *@
+<div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+    <label class="small text-secondary d-inline-flex align-items-center gap-1 mb-0" style="cursor:pointer;">
+        <input type="checkbox" class="bulk-all form-check-input mt-0"/> Select all
+    </label>
+    <div class="bulk-bar d-flex align-items-center gap-2 flex-wrap" hidden>
+        <span class="small text-secondary" data-bulk-count>0 selected</span>
+        @if (Model.ShowDownload)
+        {
+            <form method="post" action="/dashboard/media/bulk-download" data-bulk-action target="_blank">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-sm btn-outline-primary">Download selected</button>
+            </form>
+        }
+        <form method="post" action="/dashboard/media/bulk-delete" data-bulk-action data-confirm="@Model.DeleteConfirm"
+              data-confirm-label="Delete">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="returnUrl" value="@Model.ReturnUrl"/>
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete selected</button>
+        </form>
+    </div>
+</div>

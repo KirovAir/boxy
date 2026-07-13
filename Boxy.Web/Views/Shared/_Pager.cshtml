@@ -1,0 +1,64 @@
+@model PagerVm
+@{
+    // Windowed page numbers: current ±2, always including first and last.
+    var window = new List<int>();
+    if (Model.Pages > 1)
+    {
+        var from = Math.Max(1, Model.Number - 2);
+        var to = Math.Min(Model.Pages, Model.Number + 2);
+        if (from > 1)
+        {
+            window.Add(1);
+            if (from > 2)
+            {
+                window.Add(-1);
+            }
+        }
+
+        for (var i = from; i <= to; i++)
+        {
+            window.Add(i);
+        }
+
+        if (to < Model.Pages)
+        {
+            if (to < Model.Pages - 1)
+            {
+                window.Add(-1);
+            }
+
+            window.Add(Model.Pages);
+        }
+    }
+
+    string PageUrl(int n)
+    {
+        return Context.Request.UrlWith((Model.PageParam, n.ToString()));
+    }
+}
+@if (Model.Total > 0)
+{
+    <div class="pager mt-3">
+        <span class="pager__info">@Model.FirstItem–@Model.LastItem of @Model.Total @Model.Noun</span>
+        @if (Model.Pages > 1)
+        {
+            <nav class="pager__links" aria-label="Pagination">
+                <a class="pager__link @(Model.Number <= 1 ? "is-disabled" : "")"
+                   href="@(Model.Number <= 1 ? "#" : PageUrl(Model.Number - 1))" aria-label="Previous">‹</a>
+                @foreach (var n in window)
+                {
+                    if (n == -1)
+                    {
+                        <span class="pager__link is-disabled">…</span>
+                    }
+                    else
+                    {
+                        <a class="pager__link @(n == Model.Number ? "is-active" : "")" href="@PageUrl(n)">@n</a>
+                    }
+                }
+                <a class="pager__link @(Model.Number >= Model.Pages ? "is-disabled" : "")"
+                   href="@(Model.Number >= Model.Pages ? "#" : PageUrl(Model.Number + 1))" aria-label="Next">›</a>
+            </nav>
+        }
+    </div>
+}

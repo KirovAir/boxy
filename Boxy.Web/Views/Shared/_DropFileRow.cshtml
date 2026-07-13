@@ -1,0 +1,84 @@
+@model DropFileRow
+@{
+    var m = Model.Item;
+    var ready = m.Status == MediaStatus.Ready;
+    var kind = MediaKinds.LightboxKind(m);
+    var uploader = UploaderIdentity.For(m.UploaderToken);
+    // A link only where there's a single query scope to filter (a box); on the combined dashboard list
+    // the same chip renders as a plain label.
+    var uploaderUrl = uploader is not null && Model.UploaderKey is not null
+        ? Context.Request.UrlWith((Model.UploaderKey, uploader.Code), (Model.PageKey ?? "p", "1"))
+        : null;
+}
+@* A ready row is clickable (data-lightbox); boxy.js previews image/video inline and opens
+   anything else in a new tab, while the Download/Delete controls keep working. *@
+<li class="list-group-item drop-row d-flex align-items-center gap-3 @(ready ? "is-previewable" : "")"
+    data-lightbox="@(ready ? "" : null)" data-slug="@m.Slug" data-kind="@kind"
+    title="@(ready ? "Click to preview" : null)">
+    <input type="checkbox" class="bulk-check form-check-input mt-0" value="@m.Id" aria-label="Select file"/>
+    @if (m.PosterFileName is not null)
+    {
+        <img src="/poster/@m.Slug?v=@m.PosterVersion()" class="film-thumb" alt="" width="80" height="48"
+             style="object-fit:cover;" loading="lazy"/>
+    }
+    else
+    {
+        <partial name="_FileIcon" model="(m.Kind, m.Extension)"/>
+    }
+    <span class="flex-grow-1 text-truncate">
+        <span class="d-block text-truncate">@m.OriginalFileName</span>
+        <span class="small text-secondary mono d-block text-truncate">
+            @m.Kind.ToString().ToUpperInvariant()
+            <text>· @Format.Bytes(m.SizeBytes)</text>
+            @if (Format.Dimensions(m.Width, m.Height) is { Length: > 0 } dim)
+            {
+                <text>· @dim</text>
+            }
+            @if ((m.Kind == MediaKind.Video || m.Kind == MediaKind.Audio)
+                 && Format.Duration(m.DurationSeconds) is { Length: > 0 } dur)
+            {
+                <text>· @dur</text>
+            }
+            @if (m.CapturedAt is { } cap)
+            {
+                <text>· <span title="Original date from the file's own metadata">Taken @cap.ToString("d MMM yyyy")</span></text>
+            }
+            @if (Model.BucketName is { Length: > 0 } bn)
+            {
+                <text>· @bn</text>
+            }
+            @if (!ready)
+            {
+                var st = MediaKinds.StatusStamp(m.Status);
+                <span class="stamp @st.Cls ms-1">@st.Text</span>
+            }
+        </span>
+        <span class="small text-secondary d-flex align-items-center gap-1 flex-wrap">
+            @if (uploader is not null)
+            {
+                if (uploaderUrl is not null)
+                {
+                    <a class="up-chip" href="@uploaderUrl" title="Show only @uploader.Name's uploads">
+                        <span class="up-dot" style="background:@uploader.Color"></span>@uploader.Name
+                    </a>
+                }
+                else
+                {
+                    <span class="up-chip up-chip--static">
+                        <span class="up-dot" style="background:@uploader.Color"></span>@uploader.Name
+                    </span>
+                }
+                <span aria-hidden="true">·</span>
+            }
+            <partial name="_TimeAgo" model="m.CreatedDate"/>
+        </span>
+    </span>
+    <div class="d-flex gap-2">
+        <a href="/dashboard/media/@m.Id/download" class="btn btn-sm btn-outline-primary">Download</a>
+        <form method="post" action="/dashboard/media/@m.Id/delete"
+              data-confirm="Delete this file? This can’t be undone.">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+        </form>
+    </div>
+</li>

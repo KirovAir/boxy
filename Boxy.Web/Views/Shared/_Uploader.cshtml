@@ -1,0 +1,36 @@
+@model UploaderVm
+@* The one chunked uploader (upload.js): drag-drop or click, live progress + resume. The plain
+   multipart post is the no-JS fallback. Render once per page. *@
+<form id="uploadForm" method="post" action="@Model.Action" enctype="multipart/form-data"
+      data-chunk-url="@Model.ChunkUrl" data-complete-url="@Model.CompleteUrl"
+      data-reload="@(Model.Reload ? "true" : null)" data-delete-base="@Model.DeleteBase"
+      data-max-bytes="@(Model.MaxBytes > 0 ? Model.MaxBytes.ToString() : null)">
+    @if (Model.Antiforgery)
+    {
+        @Html.AntiForgeryToken()
+    }
+    <label class="dropzone mb-3">
+        <input type="file" name="@Model.InputName" multiple="@(Model.Multiple ? "multiple" : null)"/>
+        <span class="up-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline
+                    points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </span>
+        <div class="up-title">@Model.Title</div>
+        <div class="small">@Model.Hint</div>
+    </label>
+    @if (Model.KeepOriginalOption)
+    {
+        <div class="form-check mb-3">
+            <input type="checkbox" name="keepOriginal" value="true" class="form-check-input" id="keepOriginal"/>
+            <label class="form-check-label" for="keepOriginal">Keep original (don't re-encode video)</label>
+            <div class="form-text">Skips transcoding and keeps the source codec. Only for videos whose codec your
+                viewers can play.
+            </div>
+        </div>
+    }
+    <button type="submit" class="btn btn-primary">@Model.ButtonText</button>
+</form>
+<ul class="list-group mt-3" id="queue"></ul>
+<div id="readout" class="alert alert-secondary py-2 small mt-3 d-none"></div>

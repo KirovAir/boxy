@@ -1,0 +1,27 @@
+# Boxy - self-hosted file and media sharing.
+# Set a strong Admin__Password below, then build and run: docker compose up -d --build
+services:
+  boxy:
+    build:
+      context: .
+      dockerfile: Boxy.Web/Dockerfile
+    image: boxy:latest
+    container_name: boxy
+    restart: unless-stopped
+    ports:
+      - "3895:3895"
+    environment:
+      # Admin login for the dashboard. Set a strong password before first run.
+      Admin__Email: "admin@example.com"
+      Admin__Password: "change-me"
+
+      # Absolute base URL of your instance, used for share links and link previews
+      # (OpenGraph). Leave empty to derive it from the request host.
+      PublicBaseUrl: ""
+
+      # Match these to the host user that should own the files on the volume.
+      PUID: "1000"
+      PGID: "1000"
+    volumes:
+      # The SQLite database and all uploaded files live here. Back this up.
+      - ./data:/data

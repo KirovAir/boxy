@@ -1,0 +1,33 @@
+## .NET
+bin/
+obj/
+*.user
+.vs/
+.idea/
+*.DotSettings.user
+
+## Publish output
+publish/
+
+## Database & storage
+*.db
+*.db-shm
+*.db-wal
+*.db.bak
+storage/
+uploads/
+data/
+
+## Environment
+.env
+.env.*
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Data Protection keys (persisted on /data in prod)
+keys/
+
+# codex-junior review artifact
+findings_codex.md

@@ -1,0 +1,55 @@
+@{
+    ViewData["Title"] = "Create account";
+    ViewData["HideNav"] = true; // the centered mascot + wordmark is the brand here - no nav logo needed
+}
+<div class="row justify-content-center">
+    <div class="col-sm-8 col-md-5 col-lg-4">
+        <div class="text-center mt-5 mb-3">
+            <img src="/img/boxy-cat-sm.png" alt="" class="mascot mx-auto mb-2" asp-append-version="true"/>
+            <img src="/img/boxy-logo.png" alt="Boxy" class="brand-logo mx-auto" style="height:34px"
+                 asp-append-version="true"/>
+            <p class="text-secondary small mt-2 mb-0 mx-auto" style="max-width:23rem">
+                Videos, images, PDFs, anything. Drop it in a box, get a link, send it anywhere.
+            </p>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <h1 class="h5 card-title mb-3">Create your account</h1>
+                @if (ViewBag.Error is string error)
+                {
+                    <div class="alert alert-danger py-2">@error</div>
+                }
+                <form method="post" action="/register">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="returnUrl" value="@(ViewBag.ReturnUrl as string)"/>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" name="email" class="form-control" autocomplete="email"
+                               value="@(ViewBag.Email as string)" required autofocus/>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Username <span class="text-secondary">(optional)</span></label>
+                        <input type="text" name="username" class="form-control" autocomplete="username"
+                               value="@(ViewBag.Username as string)" minlength="3" maxlength="32"/>
+                        <div class="form-text">Lets you sign in with a handle instead of your email.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Name <span class="text-secondary">(optional)</span></label>
+                        <input type="text" name="name" class="form-control" autocomplete="name"
+                               value="@(ViewBag.Name as string)"/>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control" autocomplete="new-password"
+                               minlength="8" required/>
+                        <div class="form-text">At least 8 characters.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Create account</button>
+                </form>
+                <p class="text-center text-secondary small mt-3 mb-0">
+                    Already have an account? <a href="/login">Log in</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>

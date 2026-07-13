@@ -1,0 +1,29 @@
+@model FilterBarVm
+@{
+    var kinds = new[] { MediaKind.Video, MediaKind.Image, MediaKind.Audio, MediaKind.Pdf, MediaKind.File };
+    var total = Model.Counts.Values.Sum();
+
+    string? ChipUrl(string? kind)
+    {
+        return Context.Request.UrlWith((Model.KindKey, kind), (Model.PageKey, "1"));
+    }
+}
+<div class="filterbar" role="group" aria-label="Filter by type">
+    <a class="filter-chip @(Model.Active.Kind is null ? "is-active" : "")"
+       aria-current="@(Model.Active.Kind is null ? "true" : null)" href="@ChipUrl(null)">
+        All <span class="filter-chip__count">@total</span>
+    </a>
+    @foreach (var k in kinds)
+    {
+        var n = Model.Counts.TryGetValue(k, out var c) ? c : 0;
+        var on = Model.Active.Kind == k;
+        // A zero-count chip stays visible (stable taxonomy) but isn't a dead-end click; the active chip
+        // toggles itself off. Clicking any chip resets this list's page to 1 and keeps the other list's state.
+        var dead = n == 0 && !on;
+        <a class="filter-chip @(on ? "is-active" : "") @(dead ? "is-disabled" : "")"
+           aria-current="@(on ? "true" : null)"
+           href="@(dead ? null : ChipUrl(on ? null : k.ToString().ToLowerInvariant()))">
+            @k <span class="filter-chip__count">@n</span>
+        </a>
+    }
+</div>

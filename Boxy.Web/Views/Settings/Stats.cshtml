@@ -1,0 +1,154 @@
+@model StatsViewModel
+@{
+    ViewData["Title"] = "Statistics";
+    ViewData["SettingsTab"] = "stats";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+
+    string files(int n)
+    {
+        return $"{n} file{(n == 1 ? "" : "s")}";
+    }
+
+    var storageCards = new List<(string Label, string Value, string? Sub)>
+    {
+        ("Stored", Format.Bytes(Model.StoredBytes), $"{files(Model.StoredObjects)} on {Model.StorageProvider}"),
+        ("Originals", Format.Bytes(Model.OriginalBytes), $"{files(Model.OriginalCount)}, deduplicated"),
+        ("Generated", Format.Bytes(Model.GeneratedBytes), $"{files(Model.GeneratedCount)}, posters and web")
+    };
+    if (Model.DedupSavedBytes > 0)
+    {
+        storageCards.Add(("Dedup saved", Format.Bytes(Model.DedupSavedBytes), "repeat uploads stored once"));
+    }
+
+    var countCards = new (string Label, string Value, string? Sub)[]
+    {
+        ("Accounts", Model.UserCount.ToString(), $"{Model.ActiveUserCount} active"),
+        ("Boxes", Model.BoxCount.ToString(), null),
+        ("Shares", Model.ShareCount.ToString(), null),
+        ("Drop-offs", Model.DropOffCount.ToString(), null)
+    };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Storage</h2>
+</div>
+<p class="text-secondary small">The real footprint on @Model.StorageProvider. "Stored" is every file; it breaks down
+    into deduplicated originals plus the posters and web versions Boxy generates for playback.</p>
+
+<div class="row g-3 mb-4">
+    @foreach (var c in storageCards)
+    {
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="text-secondary small text-uppercase" style="letter-spacing: .04em;">@c.Label</div>
+                    <div class="h4 mb-0 mt-1">@c.Value</div>
+                    @if (c.Sub is not null)
+                    {
+                        <div class="text-secondary small mt-1">@c.Sub</div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Content</h2>
+</div>
+
+<div class="row g-3 mb-4">
+    @foreach (var c in countCards)
+    {
+        <div class="col-6 col-md-4 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="text-secondary small text-uppercase" style="letter-spacing: .04em;">@c.Label</div>
+                    <div class="h4 mb-0 mt-1">@c.Value</div>
+                    @if (c.Sub is not null)
+                    {
+                        <div class="text-secondary small mt-1">@c.Sub</div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Configuration</h2>
+</div>
+<p class="text-secondary small">What this instance booted with, from environment and <span
+        class="mono">appsettings</span>. Secrets are shown only as set or not set, never their values.</p>
+
+<div class="row g-3 mb-4">
+    @foreach (var group in Model.Config)
+    {
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="text-secondary small text-uppercase mb-2"
+                         style="letter-spacing: .04em;">@group.Title</div>
+                    <dl class="row mb-0 small">
+                        @foreach (var item in group.Items)
+                        {
+                            <dt class="col-5 fw-normal text-secondary">@item.Label</dt>
+                            <dd class="col-7 mb-1 text-break">@item.Value</dd>
+                        }
+                    </dl>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Per account</h2>
+</div>
+<p class="text-secondary small">Content size is the account's own shares plus the drop-offs collected in its boxes
+    (logical size).</p>
+
+@if (Model.Users.Count == 0)
+{
+    <partial name="_EmptyState" model='"No accounts yet."'/>
+}
+else
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>Account</th>
+                        <th class="text-end">Shares</th>
+                        <th class="text-end">Boxes</th>
+                        <th class="text-end">Drop-offs</th>
+                        <th class="text-end">Content</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var u in Model.Users)
+                    {
+                        <tr>
+                            <td>
+                                <span class="mono">@(string.IsNullOrEmpty(u.Username) ? u.Email : u.Username)</span>
+                                @if (!u.IsActive)
+                                {
+                                    <span class="stamp stamp--closed ms-1">Disabled</span>
+                                }
+                            </td>
+                            <td class="text-end">@u.Shares</td>
+                            <td class="text-end">@u.Boxes</td>
+                            <td class="text-end">@u.DropOffs</td>
+                            <td class="text-end">@Format.Bytes(u.ContentBytes)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}

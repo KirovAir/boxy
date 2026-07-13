@@ -1,0 +1,78 @@
+@model VideoSettingsViewModel
+@{
+    ViewData["Title"] = "Video";
+    ViewData["SettingsTab"] = "video";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Video</h2>
+</div>
+<p class="text-secondary small">
+    How Boxy re-encodes videos that browsers can't play as-is. Originals are never touched, and videos
+    already processed keep the version they have - these settings apply to new uploads.
+    @if (!Model.FromDb)
+    {
+        <text>Currently using the built-in defaults - save to override them.</text>
+    }
+</p>
+
+<div class="card" style="max-width: 640px;">
+    <div class="card-body">
+        <form method="post" action="/settings/video">
+            @Html.AntiForgeryToken()
+
+            <label class="form-label" for="crf">Quality</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="crf" id="crf" class="form-control" min="14" max="35" value="@Model.Crf"/>
+                <span class="input-group-text text-secondary">CRF</span>
+            </div>
+            <div class="form-text mb-4">
+                Lower is better quality and a bigger file. <span class="mono">18</span> is visually lossless,
+                <span class="mono">23</span> is noticeably smaller, <span class="mono">28</span> is small and
+                soft. Below 14 the file grows enormously for no visible gain, so that's the floor.
+            </div>
+
+            <label class="form-label" for="maxedge">Max resolution</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="maxLongEdge" id="maxedge" class="form-control" min="0" max="4320"
+                       value="@Model.MaxLongEdge"/>
+                <span class="input-group-text text-secondary">px</span>
+            </div>
+            <div class="form-text mb-4">
+                The longer edge of a re-encoded video is capped at this. <span class="mono">1920</span> is 1080p.
+                Set <span class="mono">0</span> for no cap. Going above 1920 makes files much bigger, encoding
+                much slower (4K on a small server can take hours per clip), and can push the video past what
+                older phones and TVs will play.
+            </div>
+
+            <label class="form-label" for="preset">Encoding speed</label>
+            <select name="preset" id="preset" class="form-select mb-1" style="max-width: 18rem;">
+                @foreach (var p in VideoSettings.AllowedPresets)
+                {
+                    <option value="@p" selected="@(string.Equals(Model.Preset, p, StringComparison.OrdinalIgnoreCase))">@p</option>
+                }
+            </select>
+            <div class="form-text mb-4">
+                How hard the encoder works. <span class="mono">slow</span> gives the best quality per byte;
+                <span class="mono">veryfast</span> finishes sooner on a small server at the cost of a bigger
+                file for the same quality.
+            </div>
+
+            <label class="form-label" for="maxrate">Max bitrate</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="maxrateKbps" id="maxrate" class="form-control" min="0" max="100000"
+                       value="@Model.MaxrateKbps"/>
+                <span class="input-group-text text-secondary">kbps</span>
+            </div>
+            <div class="form-text mb-4">
+                Ceiling so a high-motion clip can't spike to a bitrate that stalls on a phone connection.
+                Set <span class="mono">0</span> to let the quality setting decide on its own.
+            </div>
+
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+</div>

@@ -1,0 +1,7 @@
+# Normalize line endings on commit; check out native on each platform.
+* text=auto
+
+# Must stay LF or they break inside the Linux container / on a POSIX host.
+*.sh    text eol=lf
+Dockerfile text eol=lf
+entrypoint.sh text eol=lf

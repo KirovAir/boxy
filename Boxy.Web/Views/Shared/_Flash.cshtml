@@ -1,0 +1,61 @@
+@using Boxy.Web
+@{
+    var flashes = TempData.ReadFlashes();
+}
+@if (flashes.Count > 0)
+{
+    <div class="flash-stack" aria-live="polite" aria-atomic="true">
+        @foreach (var f in flashes)
+        {
+            var kind = f.Kind.ToString().ToLowerInvariant();
+            // Errors and warnings stay until dismissed - they're too important to vanish on a timer.
+            var sticky = f.Kind is FlashKind.Danger or FlashKind.Warning;
+            <div class="flash flash--@kind" role="@(sticky ? "alert" : "status")" data-sticky="@(sticky ? "1" : null)">
+                <span class="flash__icon" aria-hidden="true">
+                    @switch (f.Kind)
+                    {
+                        case FlashKind.Success:
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                 stroke-linecap="round" stroke-linejoin="round"><path
+                                    d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline
+                                    points="22 4 12 14.01 9 11.01"/></svg>
+                            break;
+                        case FlashKind.Danger:
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                 stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line
+                                    x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                            break;
+                        case FlashKind.Warning:
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                 stroke-linecap="round" stroke-linejoin="round"><path
+                                    d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line
+                                    x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            break;
+                        default:
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                                 stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line
+                                    x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                            break;
+                    }
+                </span>
+                <span class="flash__text">@f.Text</span>
+                <button type="button" class="flash__close" aria-label="Dismiss">&times;</button>
+            </div>
+        }
+    </div>
+    <script>
+        (function () {
+            document.querySelectorAll('.flash').forEach(function (el) {
+                var dismiss = function () {
+                    el.classList.add('flash--out');
+                    setTimeout(function () {
+                        el.remove();
+                    }, 220);
+                };
+                el.querySelector('.flash__close').addEventListener('click', dismiss);
+                // Success/info clear themselves; errors and warnings wait for a click.
+                if (!el.getAttribute('data-sticky')) setTimeout(dismiss, 5000);
+            });
+        })();
+    </script>
+}

@@ -1,0 +1,10 @@
+@model SortBarVm
+@* The sort links for one list. Selecting a sort resets that list's page to 1 and preserves every other
+   query key (including the active filter) via UrlWith. *@
+<div class="sortbar">
+    @foreach (var (key, label) in Model.Options)
+    {
+        <a class="sort-link @(Model.Active == key ? "is-active" : "")"
+           href="@Context.Request.UrlWith((Model.SortKey, key), (Model.PageKey, "1"))">@label</a>
+    }
+</div>

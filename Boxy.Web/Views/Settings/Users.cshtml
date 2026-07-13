@@ -1,0 +1,185 @@
+@model SettingsUsersViewModel
+@{
+    ViewData["Title"] = "Users";
+    ViewData["SettingsTab"] = "users";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Add an account</h2>
+</div>
+<p class="text-secondary small">Create an account directly. Registered users get their own boxes and shares.</p>
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="post" action="/settings/users/create" class="row g-2 align-items-end">
+            @Html.AntiForgeryToken()
+            <div class="col-sm-3">
+                <label class="form-label small mb-1">Email</label>
+                <input type="email" name="email" class="form-control form-control-sm" required/>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label small mb-1">Username <span class="text-secondary">(optional)</span></label>
+                <input type="text" name="username" class="form-control form-control-sm" autocomplete="off" minlength="3"
+                       maxlength="32"/>
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label small mb-1">Password</label>
+                <input type="password" name="password" class="form-control form-control-sm" autocomplete="new-password"
+                       minlength="8" required/>
+            </div>
+            <div class="col-sm-2">
+                <label class="form-label small mb-1">Role</label>
+                <select name="role" class="form-select form-select-sm">
+                    <option value="User" selected>User</option>
+                    <option value="Admin">Admin</option>
+                </select>
+            </div>
+            <div class="col-sm-1">
+                <button type="submit" class="btn btn-sm btn-primary w-100">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Accounts</h2>
+</div>
+<div class="card">
+    <div class="card-body">
+        <ul class="list-group">
+            @foreach (var u in Model.Users)
+            {
+                var isSelf = u.Id == Model.CurrentUserId;
+                var isLastAdmin = u is { Role: UserRole.Admin, IsActive: true } && Model.ActiveAdminCount <= 1;
+                string capText;
+                if (u.Role == UserRole.Admin)
+                {
+                    capText = "unlimited (admin)";
+                }
+                else if (u.QuotaBytes is long qb)
+                {
+                    capText = qb == 0 ? "unlimited" : Format.Bytes(qb);
+                }
+                else
+                {
+                    capText = Model.DefaultQuotaBytes == 0 ? "unlimited (default)" : Format.Bytes(Model.DefaultQuotaBytes) + " (default)";
+                }
+
+                var overrideMb = u.QuotaBytes is long ov ? (ov / 1024 / 1024).ToString() : "";
+                <li class="list-group-item">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
+                        <span class="flex-grow-1" style="min-width: 12rem;">
+                            <span class="d-block">
+                                @u.Email
+                                @if (isSelf)
+                                {
+                                    <span class="text-secondary small">(you)</span>
+                                }
+                            </span>
+                            <span class="small text-secondary">
+                                @(u.Username is { Length: > 0 } ? "@" + u.Username + " · " : "")@(u.Name is { Length: > 0 } ? u.Name + " · " : "")@u.BoxCount box@(u.BoxCount == 1 ? "" : "es") · @u.ShareCount share@(u.ShareCount == 1 ? "" : "s") · joined <partial
+                                    name="_TimeAgo" model="u.CreatedDate"/>
+                            </span>
+                            <span
+                                class="small text-secondary d-block">@Format.Bytes(u.UsageBytes) used · limit @capText</span>
+                        </span>
+                        @if (u.Role == UserRole.Admin)
+                        {
+                            <span class="stamp" style="color:var(--tape-deep)">Admin</span>
+                        }
+                        @if (!u.IsActive)
+                        {
+                            <span class="stamp stamp--closed">Disabled</span>
+                        }
+                        <div class="d-flex gap-2 flex-wrap">
+                            @if (!isSelf && u.Role == UserRole.User)
+                            {
+                                <form method="post" action="/settings/users/@u.Id/role">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="role" value="Admin"/>
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Make admin</button>
+                                </form>
+                            }
+                            else if (!isSelf && u.Role == UserRole.Admin && !isLastAdmin)
+                            {
+                                <form method="post" action="/settings/users/@u.Id/role">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="role" value="User"/>
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Make user</button>
+                                </form>
+                            }
+                            @if (!isLastAdmin)
+                            {
+                                <form method="post" action="/settings/users/@u.Id/toggle">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit"
+                                            class="btn btn-sm btn-outline-secondary">@(u.IsActive ? "Disable" : "Enable")</button>
+                                </form>
+                            }
+                            @if (!isSelf && !isLastAdmin)
+                            {
+                                <form method="post" action="/settings/users/@u.Id/delete"
+                                      data-confirm="Delete this account and all its boxes, shares, and files? This can’t be undone."
+                                      data-confirm-title="Delete account" data-confirm-label="Delete account">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            }
+                        </div>
+                    </div>
+                    <div class="d-flex gap-3 flex-wrap mt-2">
+                        <details>
+                            <summary class="small text-secondary" style="cursor:pointer;">Edit login details</summary>
+                            <form method="post" action="/settings/users/@u.Id/identity" class="row g-2 mt-1"
+                                  style="max-width: 30rem;">
+                                @Html.AntiForgeryToken()
+                                <div class="col-sm-6">
+                                    <label class="form-label small mb-1">Email</label>
+                                    <input type="email" name="email" class="form-control form-control-sm"
+                                           value="@u.Email" required/>
+                                </div>
+                                <div class="col-sm-6">
+                                    <label class="form-label small mb-1">Username <span class="text-secondary">(optional)</span></label>
+                                    <input type="text" name="username" class="form-control form-control-sm"
+                                           value="@u.Username" autocomplete="off" minlength="3" maxlength="32"/>
+                                </div>
+                                <div class="col-12">
+                                    <button type="submit" class="btn btn-sm btn-primary">Save details</button>
+                                </div>
+                            </form>
+                        </details>
+                        <details>
+                            <summary class="small text-secondary" style="cursor:pointer;">Set a new password</summary>
+                            <form method="post" action="/settings/users/@u.Id/reset" class="d-flex gap-2 mt-1"
+                                  style="max-width: 24rem;">
+                                @Html.AntiForgeryToken()
+                                <input type="password" name="password" class="form-control form-control-sm"
+                                       autocomplete="new-password" minlength="8" placeholder="New password" required/>
+                                <button type="submit" class="btn btn-sm btn-primary">Set</button>
+                            </form>
+                        </details>
+                        @if (u.Role != UserRole.Admin)
+                        {
+                            <details>
+                                <summary class="small text-secondary" style="cursor:pointer;">Storage limit</summary>
+                                <form method="post" action="/settings/users/@u.Id/quota"
+                                      class="d-flex gap-2 mt-1 align-items-center" style="max-width: 28rem;">
+                                    @Html.AntiForgeryToken()
+                                    <div class="input-group input-group-sm" style="max-width: 14rem;">
+                                        <input type="number" name="quota" class="form-control" min="0" max="104857600"
+                                               value="@overrideMb" placeholder="default"/>
+                                        <span class="input-group-text text-secondary">MB</span>
+                                    </div>
+                                    <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                                    <span class="small text-secondary">blank = default, 0 = unlimited</span>
+                                </form>
+                            </details>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    </div>
+</div>

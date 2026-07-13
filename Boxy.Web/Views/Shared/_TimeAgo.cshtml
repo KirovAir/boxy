@@ -1,0 +1,6 @@
+@model DateTime
+@{ var utc = DateTime.SpecifyKind(Model, DateTimeKind.Utc); }
+@* Relative timestamp with the absolute time on hover. The machine-readable datetime attribute lets a
+   client-side script upgrade this to live-updating later, the same idea as muxarr's TimeAgo component. *@
+<time datetime="@utc.ToString("o")" title="@utc.ToString("f") UTC"
+      class="text-secondary">@TimeHelper.FormatTimeAgo(Model)</time>

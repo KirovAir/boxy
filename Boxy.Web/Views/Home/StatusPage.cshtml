@@ -1,0 +1,36 @@
+@model int
+@{
+    Layout = null;
+    var notFound = Model == 404;
+    var title = notFound ? "Not found" : "Something went wrong";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>@Brand.Title(title)</title>
+    <meta name="robots" content="noindex"/>
+    <link rel="icon" type="image/png" href="/img/favicon.png" asp-append-version="true"/>
+    <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" asp-append-version="true"/>
+    <link rel="stylesheet" href="/lib/bootstrap/css/bootstrap.min.css" asp-append-version="true"/>
+    <link rel="stylesheet" href="/css/custom.css" asp-append-version="true"/>
+</head>
+<body>
+<main class="container py-5 text-center" style="max-width: 480px;">
+    <img src="/img/boxy-chase.png" alt="" class="mascot-chase mx-auto mb-3" asp-append-version="true"/>
+    <div class="display-6 mb-2">@title</div>
+    <p class="text-secondary">
+        @if (notFound)
+        {
+            <text>This box or file isn’t here. It may have been removed, or the link is wrong.</text>
+        }
+        else
+        {
+            <text>Something went wrong on our end. Give it a moment and try again.</text>
+        }
+    </p>
+    <a href="/" class="btn btn-sm btn-outline-primary mt-1">Go to Boxy</a>
+</main>
+</body>
+</html>

@@ -1,0 +1,53 @@
+@model PageHeader
+@* The one admin page header: back link (optional), a brand-marked icon, the title, and any status
+   stamps. Used by the dashboard, a box, and the media editor so every screen opens the same way. *@
+@if (Model.Back)
+{
+    <a href="/dashboard" class="small">← Back to dashboard</a>
+}
+<div class="d-flex align-items-center gap-2 my-3 flex-wrap">
+    <span class="brand__mark" style="color:var(--brand)">
+        @switch (Model.Icon)
+        {
+            case PageIcon.Dashboard:
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7"
+                                                                                             height="7" rx="1"/><rect
+                        x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect
+                        x="14" y="14" width="7" height="7" rx="1"/></svg>
+                break;
+            case PageIcon.Box:
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path
+                        d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>
+                break;
+            case PageIcon.Share:
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle
+                        cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42"
+                                                                                   y2="17.49"/><line x1="15.41"
+                                                                                                     y1="6.51" x2="8.59"
+                                                                                                     y2="10.49"/></svg>
+                break;
+            case PageIcon.File:
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path
+                        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                break;
+            case PageIcon.Settings:
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                break;
+        }
+    </span>
+    <h1 class="h4 mb-0">@Model.Title</h1>
+    @foreach (var (text, css) in Model.Stamps)
+    {
+        <span class="stamp @css">@text</span>
+    }
+    @if (Model.Created is DateTime created)
+    {
+        <span class="small">created <partial name="_TimeAgo" model="created"/></span>
+    }
+</div>

@@ -1,0 +1,9 @@
+@model ShareLinkEmail
+@{ Layout = "~/Views/Emails/_EmailLayout.cshtml"; }
+<p style="margin:0 0 8px;">@Model.Sender shared <strong>@Model.Title</strong> with you.</p>
+@if (Model.Note is not null)
+{
+    <p style="margin:0 0 16px;white-space:pre-wrap;">@Model.Note</p>
+}
+<partial name="~/Views/Emails/_EmailButton.cshtml" model='new EmailButton(Model.Link, "Open it")'/>
+<p style="margin:16px 0 0;color:#6b6156;font-size:13px;">Or paste this link: <a href="@Model.Link">@Model.Link</a></p>

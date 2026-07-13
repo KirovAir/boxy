@@ -1,0 +1,267 @@
+@model MediaItem
+@{
+    ViewData["Title"] = "Edit " + Model.Title;
+    var baseUrl = ViewBag.BaseUrl as string ?? "";
+    var isShare = Model.BucketId is null;
+    var ownerUsername = ViewBag.OwnerUsername as string;
+    var ownerIsAdmin = ViewBag.OwnerIsAdmin as bool? ?? false;
+    var linkPrefix = !ownerIsAdmin && !string.IsNullOrEmpty(ownerUsername) ? $"s/{ownerUsername}/" : "s/";
+    var shareUrl = baseUrl + ShareUrls.Path(Model, ownerUsername, ownerIsAdmin);
+    var (statusCls, statusText) = MediaKinds.StatusStamp(Model.Status);
+
+    var replaceUploader = new UploaderVm
+    {
+        Action = $"/dashboard/media/{Model.Id}/replace",
+        ChunkUrl = "/dashboard/upload/chunk",
+        CompleteUrl = $"/dashboard/media/{Model.Id}/replace/complete",
+        Reload = true,
+        InputName = "file",
+        Title = "Drop a file here to replace",
+        Hint = "or click to browse. Any size",
+        ButtonText = "Replace",
+        MaxBytes = ViewBag.MaxUploadBytes as long? ?? 0L
+    };
+
+    var stamps = new List<(string, string)> { (statusText, statusCls) };
+    if (isShare)
+    {
+        stamps.Add((Model.Published ? "Published" : "Draft", Model.Published ? "stamp--pub" : "stamp--draft"));
+        if (Model.SharePasswordHash is not null)
+        {
+            stamps.Add(("Password", "stamp--pub"));
+        }
+    }
+
+    var header = new PageHeader
+    {
+        Title = isShare ? "Edit share" : "Drop-off file",
+        Icon = isShare ? PageIcon.Share : PageIcon.File,
+        Back = true,
+        Stamps = stamps
+    };
+}
+<partial name="_PageHeader" model="header"/>
+
+<div class="edit-page edit-grid @(isShare ? "edit-grid--share" : "edit-grid--drop")">
+    @* ── Preview + link ─────────────────────────────────────────────────────── *@
+    <div class="card edit-a--preview">
+        <div class="card-body">
+            <div class="media-summary">
+                <div class="media-summary__thumb">
+                    @if (Model.PosterFileName is not null)
+                    {
+                        <img src="/poster/@Model.Slug?v=@Model.PosterVersion()" class="thumb-16x9 rounded" alt=""/>
+                    }
+                    else
+                    {
+                        <div
+                            class="thumb-16x9 rounded film-card__ph">@Model.Extension.TrimStart('.').ToUpperInvariant()</div>
+                    }
+                </div>
+                <div class="media-summary__info">
+                    @if (isShare)
+                    {
+                        <div class="text-secondary small mb-1">Share link</div>
+                        <a href="@shareUrl" target="_blank" class="mono text-break d-block mb-2">@shareUrl</a>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <a href="@shareUrl" target="_blank" class="btn btn-sm btn-outline-primary">View</a>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-copy="@shareUrl"
+                                    data-copy-label="Copied!">Copy link
+                            </button>
+                        </div>
+                        <div class="text-secondary small mt-2">@Model.Views view@(Model.Views == 1 ? "" : "s")</div>
+                        @if (Model.ExpiresAt is not null)
+                        {
+                            <div class="d-flex align-items-center gap-2 mt-2">
+                                <partial name="_ExpiryBadge" model="Model.ExpiresAt"/>
+                                <form method="post" action="/dashboard/media/@Model.Id/keep">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit"
+                                            class="btn btn-sm btn-outline-secondary">@(Retention.IsExpired(Model.ExpiresAt, DateTime.UtcNow) ? "Restore" : "Keep")</button>
+                                </form>
+                            </div>
+                        }
+
+                        @if ((ViewBag.EmailEnabled as bool? ?? false) && Model.Published && Model.Status == MediaStatus.Ready && !Retention.IsExpired(Model.ExpiresAt, DateTime.UtcNow))
+                        {
+                            <details class="mt-3">
+                                <summary class="small text-secondary" style="cursor:pointer;">Email this link</summary>
+                                <form method="post" action="/dashboard/media/@Model.Id/email" class="mt-2"
+                                      style="max-width: 26rem;">
+                                    @Html.AntiForgeryToken()
+                                    <input type="text" name="recipients" class="form-control form-control-sm mb-2"
+                                           placeholder="friend@example.com, another@example.com" autocomplete="off"
+                                           required/>
+                                    <textarea name="message" class="form-control form-control-sm mb-2" rows="2"
+                                              maxlength="500" placeholder="Add a short message (optional)"></textarea>
+                                    <button type="submit" class="btn btn-sm btn-primary">Send link</button>
+                                    <div class="form-text">Up to 10 addresses. They don't need an account.</div>
+                                </form>
+                            </details>
+                        }
+                    }
+                    else
+                    {
+                        <p class="text-secondary mb-0">Someone dropped this file into your box. It isn't shared - it's
+                            here for you to download or remove.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (isShare)
+    {
+        @* ── Details ────────────────────────────────────────────────────────── *@
+        <div class="card edit-a--details">
+            <div class="card-body">
+                <h2 class="h6 mb-3">Details</h2>
+                <form method="post" action="/dashboard/media/@Model.Id" enctype="multipart/form-data">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-3">
+                        <label class="form-label">Title</label>
+                        <input type="text" name="title" class="form-control" value="@Model.Title" required/>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea name="description" class="form-control" rows="3">@Model.Description</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Custom link</label>
+                        <div class="input-group">
+                            <span class="input-group-text text-secondary">@linkPrefix</span>
+                            <input type="text" name="slug" class="form-control" value="@Model.CustomSlug"
+                                   placeholder="@Model.Slug"
+                                   maxlength="64" pattern="[A-Za-z0-9._-]{1,64}" autocomplete="off" spellcheck="false"
+                                   title="Letters, numbers, dots, hyphens and underscores"/>
+                        </div>
+                        <div class="form-text">Pick a memorable link. Leave blank to keep the automatic one
+                            (@Model.Slug).
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Thumbnail</label>
+                        <input type="file" name="thumbnail" accept="image/*" class="form-control"/>
+                        <div class="form-text">Sets the link preview and tile image. Leave empty to keep the current
+                            one.
+                        </div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input type="checkbox" name="published" value="true" class="form-check-input" id="pub"
+                               @(Model.Published ? "checked" : "")/>
+                        <label class="form-check-label" for="pub">Published <span class="text-secondary">- visible at the share link</span></label>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input type="checkbox" name="allowDownload" value="true" class="form-check-input" id="dl"
+                               @(Model.AllowDownload ? "checked" : "")/>
+                        <label class="form-check-label" for="dl">Allow downloading the original <span
+                                class="text-secondary">- plain files stay downloadable regardless</span></label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Download limit</label>
+                        <input type="number" name="maxDownloads" class="form-control" min="0"
+                               value="@Model.MaxDownloads" placeholder="Unlimited"/>
+                        <div class="form-text">
+                            How many times the original may be downloaded. Blank or 0 =
+                            unlimited.@(Model.MaxDownloads is int md ? $" Used {Model.DownloadCount} of {md}." : "")
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        @if (Model.SharePasswordHash is not null)
+                        {
+                            <div class="form-check mb-2">
+                                <input type="checkbox" name="removePassword" value="true" class="form-check-input"
+                                       id="rmpw"/>
+                                <label class="form-check-label" for="rmpw">Remove the password</label>
+                            </div>
+                            <input type="password" name="sharePassword" class="form-control" autocomplete="new-password"
+                                   placeholder="Set a new password"/>
+                            <div class="form-text">Protected. Type a new password to change it, or tick remove. Leave
+                                blank to keep the current one.
+                            </div>
+                        }
+                        else
+                        {
+                            <input type="password" name="sharePassword" class="form-control" autocomplete="new-password"
+                                   placeholder="Optional - require a password to view"/>
+                            <div class="form-text">Leave blank for an open link, or set a password visitors must enter
+                                to view.
+                            </div>
+                        }
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save changes</button>
+                </form>
+            </div>
+        </div>
+    }
+
+    @* ── File (facts + download + replace) ───────────────────────────────────── *@
+    <div class="card edit-a--file">
+        <div class="card-body">
+            <h2 class="h6 mb-3">File</h2>
+            <dl class="facts mb-3">
+                <dt>Original</dt>
+                <dd class="text-break">@Model.OriginalFileName</dd>
+                <dt>Size</dt>
+                <dd>@($"{Model.SizeBytes / 1024.0 / 1024.0:0.0} MB")</dd>
+                <dt>Uploaded</dt>
+                <dd>
+                    <partial name="_TimeAgo" model="Model.CreatedDate"/>
+                </dd>
+                @if (Model.Width is not null)
+                {
+                    <dt>Resolution</dt>
+                    <dd>@Model.Width×@Model.Height</dd>
+                }
+                @if (MediaKinds.Of(Model) == MediaKind.Video)
+                {
+                    <dt>Format</dt>
+                    <dd>@Model.VideoCodec@(Model.AudioCodec is not null ? " / " + Model.AudioCodec : "")@(Model.WebFileName is not null ? " (converted for web)" : "")</dd>
+                }
+                else
+                {
+                    <dt>Type</dt>
+                    <dd class="text-break">@Model.ContentType</dd>
+                }
+                @if (Model.ErrorMessage is not null)
+                {
+                    <dt>Error</dt>
+                    <dd class="text-break" style="color:var(--stamp)">@Model.ErrorMessage</dd>
+                }
+            </dl>
+            <a href="/dashboard/media/@Model.Id/download" class="btn btn-sm btn-outline-primary">Download original</a>
+
+            @if (isShare)
+            {
+                <hr class="my-4"/>
+                <h3 class="h6 mb-1">Replace file</h3>
+                <p class="text-secondary small mb-3">Upload a newer version. The link, title, and stats stay - only the
+                    file changes, then reprocesses. Choosing a file starts the upload straight away.</p>
+                <partial name="_Uploader" model="replaceUploader"/>
+            }
+        </div>
+    </div>
+
+    @* ── Danger zone ────────────────────────────────────────────────────────── *@
+    <div class="card card--danger edit-a--danger">
+        <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3">
+            <div>
+                <div class="fw-bold">Delete this @(isShare ? "share" : "file")</div>
+                <div class="small text-secondary">The file and its record are removed for good. This can't be undone.
+                </div>
+            </div>
+            <form method="post" action="/dashboard/media/@Model.Id/delete"
+                  data-confirm="Delete this @(isShare ? "share" : "file")? This can’t be undone."
+                  data-confirm-label="Delete @(isShare ? "share" : "file")">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+@if (isShare)
+{
+    <script src="/js/upload.js" asp-append-version="true"></script>
+}

@@ -1,0 +1,108 @@
+@model EmailSettingsViewModel
+@{
+    ViewData["Title"] = "Email";
+    ViewData["SettingsTab"] = "email";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+    var securities = new[] { "auto", "starttls", "ssl", "none" };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Email</h2>
+</div>
+<p class="text-secondary small">
+    SMTP for drop-off and expiry notifications. Saved here, these override the environment configuration;
+    the password is encrypted at rest.
+    @if (!Model.FromDb)
+    {
+        <text>Currently using the values from <span class="mono">appsettings</span>/environment.</text>
+    }
+</p>
+
+<div class="card" style="max-width: 640px;">
+    <div class="card-body">
+        <form method="post" action="/settings/email">
+            @Html.AntiForgeryToken()
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="enabled" value="true" class="form-check-input" id="enabled" role="switch"
+                       @(Model.Enabled ? "checked" : "")/>
+                <label class="form-check-label" for="enabled">Send email via SMTP</label>
+            </div>
+            <div class="form-text mb-4">When off, boxy sends no email (webhooks still work).</div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-sm-8">
+                    <label class="form-label small mb-1" for="host">SMTP host</label>
+                    <input type="text" name="host" id="host" class="form-control form-control-sm" value="@Model.Host"
+                           placeholder="smtp.example.com" autocomplete="off"/>
+                </div>
+                <div class="col-sm-4">
+                    <label class="form-label small mb-1" for="port">Port</label>
+                    <input type="number" name="port" id="port" class="form-control form-control-sm" min="1" max="65535"
+                           value="@Model.Port"/>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small mb-1" for="security">Security</label>
+                    <select name="security" id="security" class="form-select form-select-sm">
+                        @foreach (var s in securities)
+                        {
+                            <option value="@s"
+                                    selected="@(string.Equals(Model.Security, s, StringComparison.OrdinalIgnoreCase))">@s</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-3">
+                <div class="col-sm-6">
+                    <label class="form-label small mb-1" for="user">Username <span
+                            class="text-secondary">(optional)</span></label>
+                    <input type="text" name="user" id="user" class="form-control form-control-sm" value="@Model.User"
+                           autocomplete="off"/>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small mb-1" for="password">Password</label>
+                    <input type="password" name="password" id="password" class="form-control form-control-sm"
+                           autocomplete="new-password"
+                           placeholder="@(Model.PasswordSet ? "set - leave blank to keep" : "not set")"/>
+                </div>
+            </div>
+
+            <div class="row g-2 mb-4">
+                <div class="col-sm-6">
+                    <label class="form-label small mb-1" for="from">From address</label>
+                    <input type="email" name="from" id="from" class="form-control form-control-sm" value="@Model.From"
+                           placeholder="boxy@example.com"/>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small mb-1" for="fromName">From name</label>
+                    <input type="text" name="fromName" id="fromName" class="form-control form-control-sm"
+                           value="@Model.FromName"/>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+
+        <hr class="my-4"/>
+
+        <form method="post" action="/settings/email/test" class="d-flex align-items-center gap-2 flex-wrap">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-outline-primary btn-sm">Send test email</button>
+            <span class="text-secondary small">
+                @if (Model.AdminEmail is { Length: > 0 } e && e.Contains('@'))
+                {
+                    <text>Sends to <span class="mono">@e</span> using the saved settings.</text>
+                }
+                else
+                {
+                    <text>Add a real email to your account to receive a test.</text>
+                }
+            </span>
+        </form>
+    </div>
+</div>

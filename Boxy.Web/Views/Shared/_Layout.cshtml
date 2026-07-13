@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>@Brand.Title(ViewData["Title"] as string)</title>
+    <meta name="robots" content="noindex"/>
+    <link rel="icon" type="image/png" href="/img/favicon.png" asp-append-version="true"/>
+    <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" asp-append-version="true"/>
+    <link rel="stylesheet" href="/lib/bootstrap/css/bootstrap.min.css" asp-append-version="true"/>
+    <link rel="stylesheet" href="/lib/bootstrap-icons/font/bootstrap-icons.min.css" asp-append-version="true"/>
+    <link rel="stylesheet" href="/css/custom.css" asp-append-version="true"/>
+</head>
+<body class="app-shell">
+<partial name="_Flash"/>
+@if (ViewData["HideNav"] as bool? != true)
+{
+    <nav class="navbar navbar-expand">
+        <div class="container">
+            <a class="navbar-brand" href="/dashboard" aria-label="Boxy">
+                <img src="/img/boxy-logo.png" alt="Boxy" class="brand-logo" asp-append-version="true"/>
+            </a>
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <div class="ms-auto d-flex align-items-center gap-3">
+                    @if (User.IsAdmin())
+                    {
+                        <a href="/settings" class="navbar__link" title="Settings and users">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path
+                                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                            </svg>
+                            <span>Settings</span>
+                        </a>
+                    }
+                    <span class="navbar__user text-truncate" title="@User.Identity!.Name">@User.Identity!.Name</span>
+                    <form method="post" action="/logout">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Log out</button>
+                    </form>
+                </div>
+            }
+        </div>
+    </nav>
+}
+<main class="container py-4">
+    @RenderBody()
+</main>
+<partial name="_Footer"/>
+<script src="/js/boxy.js" asp-append-version="true"></script>
+</body>
+</html>

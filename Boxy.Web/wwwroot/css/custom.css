@@ -1,0 +1,1392 @@
+/* ==========================================================================
+   Boxy - "Kraft & Tape" theme
+   A storage-box identity: kraft-cardboard surfaces, ink-brown text, a
+   packing-tape blue accent, and rubber-stamp status labels. Buckets are boxes
+   (taped shut); videos and drop-offs are the contents.
+   ========================================================================== */
+
+:root {
+    /* Kraft surfaces */
+    --kraft-page: #f3ead8; /* the cardboard the app sits on */
+    --kraft-card: #fbf6ea; /* box interior - cards, panels */
+    --kraft-sub: #efe4cf; /* recessed / muted panels */
+    --kraft-flap: #ecdcbe; /* the closed box-flap tone */
+    --kraft-line: #dcc7a0; /* hairline / border */
+    --kraft-edge: #cbb488; /* stronger box edge */
+
+    /* Ink */
+    --ink: #2a2018; /* body text - dark bistre */
+    --ink-soft: #6e5d48; /* secondary text, warm */
+    --ink-faint: #9a876c; /* tertiary / placeholders */
+
+    /* Brand + accents */
+    --brand: #f5a623; /* amber - matches the boxy wordmark & mascot */
+    --brand-deep: #bd7811; /* deeper amber for text on kraft */
+    --tape: #2e68d8; /* packing-tape blue - interactive */
+    --tape-deep: #1f4eae;
+    --tape-wash: #2e68d81f; /* translucent tape fill */
+    --open: #4e7a3a; /* kraft-tuned green */
+    --stamp: #b23a2e; /* stamp red - closed / alert */
+
+    /* Type */
+    --sans: "Inter var", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "Menlo", "Cascadia Mono", "Roboto Mono", monospace;
+
+    /* Bootstrap remap - page */
+    --bs-body-bg: var(--kraft-page);
+    --bs-body-color: var(--ink);
+    --bs-secondary-color: var(--ink-soft);
+    --bs-secondary-bg: var(--kraft-sub);
+    --bs-tertiary-bg: var(--kraft-sub);
+    --bs-border-color: var(--kraft-line);
+    --bs-border-color-translucent: #2a201820;
+    --bs-emphasis-color: var(--ink);
+    --bs-heading-color: var(--ink);
+    --bs-link-color: var(--tape);
+    --bs-link-hover-color: var(--tape-deep);
+    --bs-link-color-rgb: 46, 104, 216;
+    --bs-link-hover-color-rgb: 31, 78, 174;
+    --bs-font-sans-serif: var(--sans);
+
+    /* Bootstrap semantic RGBs (badges/alerts that remain) */
+    --bs-primary: var(--tape);
+    --bs-primary-rgb: 46, 104, 216;
+    --bs-success-rgb: 78, 122, 58;
+    --bs-danger-rgb: 178, 58, 46;
+    --bs-secondary-rgb: 110, 93, 72;
+
+    --bs-border-radius: .6rem;
+    --bs-border-radius-sm: .4rem;
+}
+
+body {
+    background-color: var(--kraft-page);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.01em;
+}
+
+h1, h2, h3, h4, h5, h6, .h1, .h2, .h3, .h4, .h5, .h6 {
+    color: var(--ink);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+a {
+    text-underline-offset: 2px;
+}
+
+/* Warm secondary text everywhere */
+.text-secondary {
+    color: var(--ink-soft) !important;
+}
+
+.text-white-50 {
+    color: #fbf6ea88 !important;
+}
+
+/* Monospace utility for slugs, sizes, tracking-number-ish data */
+.mono, .u-mono {
+    font-family: var(--mono);
+    letter-spacing: 0;
+}
+
+/* ── Nav / brand: an elevated kraft label, lifted off the page ─────────────── */
+.navbar {
+    background: var(--kraft-card) !important;
+    border-bottom: 1px solid var(--kraft-line);
+    box-shadow: 0 3px 12px #2a201814;
+    padding: .7rem 0;
+}
+
+.navbar .navbar-brand,
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: .55rem;
+    color: var(--ink);
+    font-weight: 800;
+    letter-spacing: .02em;
+    font-size: 1.15rem;
+}
+
+.navbar .brand-logo {
+    height: 27px;
+}
+
+/* scoped: leaves the login wordmark size alone */
+.navbar__link {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: .9rem;
+}
+
+.navbar__link:hover {
+    color: var(--tape-deep);
+}
+
+.navbar__link svg {
+    display: block;
+    flex: none;
+}
+
+.navbar__user {
+    color: var(--ink-soft);
+    font-size: .85rem;
+    max-width: 12rem;
+}
+
+.brand__mark {
+    color: var(--brand);
+    flex: none;
+}
+
+.brand__mark svg {
+    display: block;
+}
+
+/* Brand wordmark + mascot images */
+.brand-logo {
+    display: block;
+    height: 30px;
+    width: auto;
+}
+
+.brand-logo--lg {
+    height: 40px;
+}
+
+.mascot {
+    display: block;
+    width: 128px;
+    max-width: 45vw;
+    height: auto;
+}
+
+.mascot--sm {
+    width: 84px;
+}
+
+/* Box-cat chasing a ball of wool - big on the not-found page, tiny in the footer */
+.mascot-chase {
+    display: block;
+    width: 240px;
+    max-width: 72vw;
+    height: auto;
+}
+
+.brand-tagline {
+    color: var(--ink-soft);
+    font-size: .92rem;
+}
+
+.dropzone .up-icon {
+    background: #f5a6231f;
+}
+
+/* ── Cards / panels ──────────────────────────────────────────────────────── */
+.card {
+    --bs-card-bg: var(--kraft-card);
+    --bs-card-border-color: var(--kraft-line);
+    --bs-card-cap-bg: transparent;
+    --bs-card-color: var(--ink);
+    box-shadow: 0 1px 0 #ffffff90 inset, 0 2px 8px #2a20180d;
+}
+
+.card-title {
+    color: var(--ink);
+}
+
+/* Section eyebrow - a stencilled label above each panel */
+.eyebrow {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--brand-deep);
+    margin-bottom: .35rem;
+}
+
+/* ── The signature: box cards (buckets) ──────────────────────────────────── */
+.box-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
+}
+
+.box-card {
+    background: var(--kraft-card);
+    border: 1px solid var(--kraft-line);
+    border-radius: .55rem;
+    padding: .9rem 1rem 1rem;
+    box-shadow: 0 1px 0 #ffffff90 inset, 0 2px 8px #2a20180d;
+    transition: transform .08s ease, box-shadow .12s ease;
+}
+
+.box-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px #2a201820;
+}
+
+.box-card__ico {
+    color: var(--brand);
+    opacity: .85;
+    flex: none;
+}
+
+.box-card__name {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    min-width: 0;
+    font-weight: 700;
+    font-size: 1.02rem;
+    color: var(--ink);
+    text-decoration: none;
+}
+
+.box-card__name:hover {
+    color: var(--tape-deep);
+}
+
+.box-card__label { /* the /u/ link, styled like a shipping label line */
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--ink-soft);
+    word-break: break-all;
+}
+
+.box-card__meta {
+    color: var(--ink-soft);
+    font-size: .82rem;
+}
+
+.box-card__actions {
+    margin-top: .75rem;
+    display: flex;
+    gap: .4rem;
+    flex-wrap: wrap;
+}
+
+/* ── Rubber-stamp status labels ──────────────────────────────────────────── */
+.stamp {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: .64rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    padding: .12rem .4rem;
+    border: 1.5px solid currentColor;
+    border-radius: .2rem;
+    line-height: 1.25;
+    transform: rotate(-2deg);
+    opacity: .92;
+    background: #ffffff40;
+    white-space: nowrap;
+}
+
+.stamp--open {
+    color: var(--open);
+}
+
+.stamp--closed {
+    color: var(--stamp);
+}
+
+.stamp--ready {
+    color: var(--open);
+}
+
+.stamp--draft {
+    color: var(--ink-soft);
+}
+
+.stamp--proc {
+    color: var(--tape-deep);
+}
+
+.stamp--failed {
+    color: var(--stamp);
+}
+
+.stamp--pub {
+    color: var(--tape-deep);
+    border-style: solid;
+}
+
+.stamp--count {
+    color: var(--brand-deep);
+    transform: none;
+    letter-spacing: .04em;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+    --bs-btn-font-weight: 600;
+    --bs-btn-border-radius: .45rem;
+}
+
+.btn-primary {
+    --bs-btn-bg: var(--tape);
+    --bs-btn-border-color: var(--tape);
+    --bs-btn-hover-bg: var(--tape-deep);
+    --bs-btn-hover-border-color: var(--tape-deep);
+    --bs-btn-active-bg: var(--tape-deep);
+    --bs-btn-active-border-color: var(--tape-deep);
+    --bs-btn-disabled-bg: var(--tape);
+    --bs-btn-disabled-border-color: var(--tape);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--tape-deep);
+    --bs-btn-border-color: var(--tape);
+    --bs-btn-hover-bg: var(--tape);
+    --bs-btn-hover-border-color: var(--tape);
+    --bs-btn-active-bg: var(--tape-deep);
+    --bs-btn-active-border-color: var(--tape-deep);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--ink);
+    --bs-btn-border-color: var(--kraft-edge);
+    --bs-btn-hover-bg: var(--ink);
+    --bs-btn-hover-border-color: var(--ink);
+    --bs-btn-hover-color: var(--kraft-card);
+}
+
+.btn-outline-danger {
+    --bs-btn-color: var(--stamp);
+    --bs-btn-border-color: #b23a2e88;
+    --bs-btn-hover-bg: var(--stamp);
+    --bs-btn-hover-border-color: var(--stamp);
+}
+
+/* ── List groups ─────────────────────────────────────────────────────────── */
+.list-group {
+    --bs-list-group-bg: var(--kraft-card);
+    --bs-list-group-border-color: var(--kraft-line);
+    --bs-list-group-color: var(--ink);
+    --bs-list-group-action-hover-bg: var(--kraft-sub);
+    --bs-list-group-action-color: var(--ink);
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.form-control, .form-select {
+    background-color: #fffdf8;
+    border-color: var(--kraft-edge);
+    color: var(--ink);
+}
+
+.form-control:focus, .form-select:focus {
+    background-color: #fffdf8;
+    border-color: var(--tape);
+    box-shadow: 0 0 0 .2rem #2e68d833;
+    color: var(--ink);
+}
+
+.form-control::placeholder {
+    color: var(--ink-faint);
+}
+
+.form-check-input:checked {
+    background-color: var(--tape);
+    border-color: var(--tape);
+}
+
+.form-check-input:focus {
+    border-color: var(--tape);
+    box-shadow: 0 0 0 .2rem #2e68d833;
+}
+
+.form-label {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+/* ── Alerts ──────────────────────────────────────────────────────────────── */
+.alert-secondary {
+    --bs-alert-bg: var(--kraft-sub);
+    --bs-alert-border-color: var(--kraft-line);
+    --bs-alert-color: var(--ink-soft);
+}
+
+/* ── Dropzone (open box, ready for contents) ─────────────────────────────── */
+.dropzone {
+    display: block;
+    position: relative;
+    border: 2px dashed var(--kraft-edge);
+    border-radius: .9rem;
+    padding: 2.75rem 1.25rem;
+    text-align: center;
+    color: var(--ink-soft);
+    cursor: pointer;
+    background: repeating-linear-gradient(90deg, #00000000 0 8px, #2a20180a 8px 9px),
+    var(--kraft-sub);
+    transition: border-color .12s, background .12s, transform .06s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.dropzone:hover, .dropzone:focus-within {
+    border-color: var(--tape);
+}
+
+.dropzone:active {
+    transform: scale(.995);
+}
+
+.dropzone.over {
+    border-color: var(--tape);
+    border-style: solid;
+    background: var(--tape-wash);
+    color: var(--ink);
+}
+
+.dropzone input[type=file] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.dropzone .up-icon {
+    width: 46px;
+    height: 46px;
+    margin: 0 auto .75rem;
+    color: var(--brand);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #c2761c1f;
+    border-radius: 50%;
+}
+
+.dropzone .up-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--ink);
+}
+
+/* ── Thumbnails ──────────────────────────────────────────────────────────── */
+.thumb-16x9 {
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #241b12;
+    width: 100%;
+    border-radius: .35rem;
+}
+
+.mine-thumb img, .film-thumb {
+    border-radius: .3rem;
+    background: #241b12;
+}
+
+/* ── Pager (page N of M) ─────────────────────────────────────────────────── */
+.pager {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+}
+
+.pager__info {
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--ink-soft);
+}
+
+.pager__links {
+    display: flex;
+    gap: .25rem;
+    margin-left: auto;
+}
+
+.pager__link {
+    min-width: 2rem;
+    text-align: center;
+    padding: .2rem .5rem;
+    border: 1px solid var(--kraft-edge);
+    border-radius: .35rem;
+    text-decoration: none;
+    color: var(--ink);
+    font-size: .85rem;
+    background: var(--kraft-card);
+}
+
+.pager__link:hover {
+    border-color: var(--tape);
+    color: var(--tape-deep);
+}
+
+.pager__link.is-active {
+    background: var(--tape);
+    border-color: var(--tape);
+    color: #fff;
+}
+
+.pager__link.is-disabled {
+    color: var(--ink-faint);
+    pointer-events: none;
+    opacity: .55;
+}
+
+.sortbar {
+    display: flex;
+    align-items: center;
+    gap: .15rem;
+    flex-wrap: wrap;
+}
+
+.sort-link {
+    font-size: .82rem;
+    text-decoration: none;
+    color: var(--ink-soft);
+    padding: .12rem .45rem;
+    border-radius: .3rem;
+}
+
+.sort-link:hover {
+    color: var(--tape-deep);
+    background: var(--kraft-sub);
+}
+
+.sort-link.is-active {
+    color: var(--ink);
+    font-weight: 700;
+    background: var(--kraft-sub);
+}
+
+/* ── Admin section tabs (Shares / Boxes) ─────────────────────────────────── */
+.admin-tabs {
+    display: inline-flex;
+    gap: .25rem;
+    padding: .25rem;
+    background: var(--kraft-sub);
+    border: 1px solid var(--kraft-line);
+    border-radius: .6rem;
+}
+
+.admin-tab {
+    padding: .35rem 1.1rem;
+    border-radius: .45rem;
+    text-decoration: none;
+    color: var(--ink-soft);
+    font-weight: 600;
+    font-size: .95rem;
+}
+
+.admin-tab:hover {
+    color: var(--tape-deep);
+}
+
+.admin-tab.is-active {
+    background: var(--kraft-card);
+    color: var(--ink);
+    box-shadow: 0 1px 2px #2a201820;
+}
+
+/* ── Films (video shares) ────────────────────────────────────────────────── */
+.film-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 1rem;
+}
+
+.film-card {
+    position: relative;
+    background: var(--kraft-card);
+    border: 1px solid var(--kraft-line);
+    border-radius: .5rem;
+    overflow: hidden;
+    box-shadow: 0 1px 0 #ffffff90 inset, 0 2px 8px #2a20180d;
+    transition: transform .08s ease, box-shadow .12s ease;
+}
+
+/* Card selection: a tidy checkbox tucked in the corner, revealed on hover (always shown on touch,
+   and whenever the card is selected). A selected card gets a themed ring + a subtle tint. */
+.film-card__select {
+    position: absolute;
+    top: .5rem;
+    left: .5rem;
+    z-index: 2;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    background: #fbf6eae6;
+    border: 1px solid var(--kraft-line);
+    border-radius: 7px;
+    box-shadow: 0 1px 3px #2a201826;
+    cursor: pointer;
+}
+
+.film-card__select input {
+    margin: 0;
+    cursor: pointer;
+    width: 1.05rem;
+    height: 1.05rem;
+}
+
+@media (hover: hover) {
+    .film-card__select {
+        opacity: 0;
+        transition: opacity .12s ease;
+    }
+
+    .film-card:hover .film-card__select,
+    .film-card:focus-within .film-card__select,
+    .film-card:has(.bulk-check:checked) .film-card__select {
+        opacity: 1;
+    }
+}
+
+.film-card:has(.bulk-check:checked) {
+    outline: 2px solid var(--tape);
+    outline-offset: -2px;
+}
+
+/* The bulk bar is revealed by JS clearing [hidden]; force it hidden otherwise, since the d-flex
+   utility's display would otherwise win over the hidden attribute. */
+.bulk-bar[hidden] {
+    display: none !important;
+}
+
+.film-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px #2a201820;
+}
+
+.film-card__body {
+    padding: .55rem .65rem .65rem;
+}
+
+.film-card__title {
+    font-weight: 700;
+    font-size: .9rem;
+    color: var(--ink);
+}
+
+.film-card__thumb {
+    position: relative;
+    display: block;
+}
+
+.film-card__ph {
+    aspect-ratio: 16 / 9;
+    background: #241b12;
+    color: #efe7d688;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: .8rem;
+}
+
+.film-card__meta {
+    display: flex;
+    gap: .3rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: .4rem 0 .35rem;
+}
+
+@media (max-width: 575.98px) {
+    .film-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+/* ── Edit / detail page: grouped cards - one column on phones, two on laptops ── */
+.edit-page {
+    max-width: 64rem;
+    margin: 0 auto;
+}
+
+.edit-grid {
+    display: grid;
+    gap: 1rem;
+}
+
+.edit-grid > .card {
+    margin-bottom: 0;
+}
+
+@media (min-width: 768px) {
+    /* A share: the form is the wide main column; preview + file sit alongside; delete spans the foot.
+       Areas (not DOM order) place the cards, so the phone stack stays preview → details → file. */
+    .edit-grid--share {
+        grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+        grid-template-areas: "details preview" "details file" "danger danger";
+        align-items: start;
+    }
+
+    /* A drop-off has no form: preview and file share the top row, delete spans the foot. */
+    .edit-grid--drop {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas: "preview file" "danger danger";
+        align-items: start;
+    }
+
+    .edit-a--preview {
+        grid-area: preview;
+    }
+
+    .edit-a--details {
+        grid-area: details;
+    }
+
+    .edit-a--file {
+        grid-area: file;
+    }
+
+    .edit-a--danger {
+        grid-area: danger;
+    }
+}
+
+.media-summary {
+    display: flex;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+}
+
+.media-summary__thumb {
+    width: 15rem;
+    max-width: 100%;
+    flex: none;
+}
+
+.media-summary__info {
+    flex: 1 1 14rem;
+    min-width: 0;
+}
+
+@media (max-width: 520px) {
+    .media-summary__thumb {
+        width: 100%;
+    }
+}
+
+/* Compact label/value grid for file facts */
+.facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: .35rem 1rem;
+    margin: 0;
+    font-size: .9rem;
+}
+
+.facts dt {
+    color: var(--ink-soft);
+    font-weight: 600;
+}
+
+.facts dd {
+    margin: 0;
+    min-width: 0;
+}
+
+/* Danger zone card - a quiet red tint so destructive actions read as separate */
+.card--danger {
+    border-color: #e3b3ab;
+    background: #fdf3f1;
+}
+
+/* Copy-to-clipboard button feedback */
+.is-copied {
+    --bs-btn-color: var(--open);
+    --bs-btn-border-color: var(--open);
+    color: var(--open) !important;
+}
+
+/* ── Lightbox (preview a stored item) ────────────────────────────────────── */
+.bx-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1080;
+    background: rgba(20, 15, 8, .92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.bx-lightbox video, .bx-lightbox img {
+    max-width: 96vw;
+    max-height: 92vh;
+    border-radius: .4rem;
+    background: #000;
+}
+
+.bx-close {
+    position: absolute;
+    top: .4rem;
+    right: .7rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    line-height: 1;
+    font-size: 2rem;
+    color: #fff;
+    background: rgba(0, 0, 0, .4);
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.mine-item {
+    cursor: pointer;
+}
+
+.mine-item .del-mine {
+    cursor: default;
+}
+
+/* A drop-off row that can be previewed: hint it's clickable, but never the controls. */
+.drop-row.is-previewable {
+    cursor: pointer;
+}
+
+.drop-row.is-previewable:hover {
+    background: var(--kraft-sub);
+}
+
+.drop-row .btn {
+    cursor: pointer;
+}
+
+/* ── Confirm dialog - a themed, on-brand replacement for window.confirm ─────── */
+.bx-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    background: rgba(20, 15, 8, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: bx-fade .12s ease-out;
+}
+
+.bx-modal {
+    background: var(--kraft-card);
+    border: 1px solid var(--kraft-edge);
+    border-radius: var(--bs-border-radius);
+    box-shadow: 0 14px 44px #2a201833;
+    max-width: 26rem;
+    width: 100%;
+    padding: 1.25rem 1.25rem 1rem;
+}
+
+.bx-modal__title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin: 0 0 .4rem;
+    color: var(--ink);
+}
+
+.bx-modal__msg {
+    color: var(--ink-soft);
+    margin: 0 0 1.15rem;
+    line-height: 1.45;
+}
+
+.bx-modal__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: .5rem;
+}
+
+@keyframes bx-fade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* ── Button system (keep every page consistent) ──────────────────────────────
+   btn-primary          filled blue  - commit/create/save data (Save, Create, Upload, Replace)
+   btn-outline-primary  blue outline - go / view / get         (Open, View, Edit, Download)
+   btn-outline-secondary grey outline- neutral toggle/utility  (Copy link, Close/Reopen, roles)
+   btn-outline-danger   red outline  - delete; the confirm dialog uses filled btn-danger
+   (The dark public share page runs its own light-on-dark set.) */
+
+/* Filled danger button, tuned to the kraft palette (stamp red), so it matches the
+   outline-danger controls it sits beside. */
+.btn-danger {
+    --bs-btn-bg: var(--stamp);
+    --bs-btn-border-color: var(--stamp);
+    --bs-btn-hover-bg: #9a3227;
+    --bs-btn-hover-border-color: #9a3227;
+    --bs-btn-active-bg: #8a2b21;
+    --bs-btn-active-border-color: #8a2b21;
+    --bs-btn-color: #fff;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-active-color: #fff;
+}
+
+/* ── Share page - dark, video-first, warm accents ────────────────────────── */
+.share-page {
+    background: #17130d;
+    color: #efe7d6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.share-main {
+    flex: 1 0 auto;
+}
+
+/* Readable column for everything under (or beside) the media */
+.share-body {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 1.25rem 1rem;
+}
+
+/* Content-first: title + meta sit directly beneath the media */
+.share-info {
+    margin-top: 1.25rem;
+}
+
+.share-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0 0 .6rem;
+}
+
+.share-meta {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.share-page a {
+    color: #9db9ff;
+}
+
+.share-page img.share-media {
+    width: 100%;
+    max-height: 82vh;
+    background: #000;
+    border-radius: .6rem;
+}
+
+/* Video is the hero: sized (aspect preserved) by an inline width/aspect-ratio to fill the viewport. */
+.share-video {
+    display: block;
+    margin: 1.25rem auto 0;
+    max-width: 96vw;
+    background: #000;
+    border-radius: .5rem;
+}
+
+/* Inline PDF preview */
+.share-pdf {
+    width: 100%;
+    height: 80vh;
+    border: 0;
+    border-radius: .6rem;
+    background: #fff;
+}
+
+/* Card for audio and generic downloadable files */
+.share-file {
+    background: #201b13;
+    border: 1px solid #3a3122;
+    border-radius: .6rem;
+    padding: 2.25rem 1.5rem;
+    text-align: center;
+}
+
+.share-file__icon {
+    color: var(--brand);
+}
+
+.share-file__icon svg {
+    display: inline-block;
+}
+
+.share-file__name {
+    color: #efe7d6;
+    font-weight: 700;
+    word-break: break-all;
+    margin-top: .35rem;
+}
+
+.share-file__meta {
+    color: #b8ad9a;
+    font-size: .9rem;
+    margin: .2rem 0 1.25rem;
+}
+
+.share-desc {
+    background: #1b1c1f;
+    border: 1px solid #2a2b2f;
+    border-radius: .5rem;
+    padding: .75rem 1rem;
+    white-space: pre-wrap;
+    color: #c9c9cc;
+}
+
+.share-page .btn-outline-light {
+    --bs-btn-color: #efe7d6;
+    --bs-btn-border-color: #efe7d655;
+}
+
+.share-page .btn-danger {
+    --bs-btn-bg: var(--stamp);
+    --bs-btn-border-color: var(--stamp);
+}
+
+/* The shared footer on the dark share page: same cat, darker hairline + lighter ink. */
+.share-page .site-footer {
+    border-top-color: #2a2318;
+}
+
+.share-page .site-footer__inner {
+    color: #b8ad9a;
+}
+
+.share-page .site-footer__inner:hover {
+    color: #efe7d6;
+}
+
+/* Headings inherit the light page text here - the global ink colour would be invisible on dark. */
+.share-page h1, .share-page h2, .share-page h3, .share-page h4, .share-page h5,
+.share-page .h1, .share-page .h2, .share-page .h3, .share-page .h4, .share-page .h5 {
+    color: #efe7d6;
+}
+
+/* ── Flash toasts (post-action feedback) ─────────────────────────────────── */
+.flash-stack {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    width: min(92vw, 26rem);
+    pointer-events: none;
+}
+
+@media (max-width: 575.98px) {
+    .flash-stack {
+        left: .75rem;
+        right: .75rem;
+        top: .75rem;
+        width: auto;
+    }
+}
+
+.flash {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: .55rem;
+    padding: .7rem .8rem;
+    border-radius: .55rem;
+    border: 1px solid;
+    border-left-width: 4px;
+    box-shadow: 0 8px 24px #2a201826;
+    font-size: .9rem;
+    font-weight: 500;
+    line-height: 1.35;
+    animation: flash-in .22s ease;
+}
+
+.flash--out {
+    animation: flash-out .22s ease forwards;
+}
+
+@keyframes flash-in {
+    from {
+        opacity: 0;
+        transform: translateX(12px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes flash-out {
+    to {
+        opacity: 0;
+        transform: translateX(12px);
+    }
+}
+
+.flash__icon {
+    flex: none;
+    margin-top: .04rem;
+}
+
+.flash__icon svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+}
+
+.flash__text {
+    flex: 1;
+    padding-top: .02rem;
+}
+
+.flash__close {
+    flex: none;
+    border: 0;
+    background: transparent;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0 .1rem;
+    cursor: pointer;
+    color: inherit;
+    opacity: .5;
+}
+
+.flash__close:hover {
+    opacity: 1;
+}
+
+.flash--success {
+    background: #ecf3e3;
+    border-color: #7ea75a;
+    color: #33571f;
+}
+
+.flash--info {
+    background: #e7eefb;
+    border-color: #6f9de6;
+    color: #274a86;
+}
+
+.flash--warning {
+    background: #fbf1dd;
+    border-color: #d9ab52;
+    color: #785516;
+}
+
+.flash--danger {
+    background: #f8e5e1;
+    border-color: #cf6a5c;
+    color: #8a2f24;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flash, .flash--out {
+        animation: none;
+    }
+}
+
+/* ── Footer - a tiny box-cat chasing wool, doubling as a quiet link home ──── */
+body.app-shell {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+body.app-shell > main {
+    flex: 1 0 auto;
+}
+
+.site-footer {
+    flex: none;
+    text-align: center;
+    margin-top: 2.5rem;
+    padding: .8rem 0;
+    border-top: 1px solid var(--kraft-line);
+}
+
+.site-footer__inner {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .45rem;
+    color: var(--ink-faint);
+    font-size: .8rem;
+    text-decoration: none;
+}
+
+.site-footer__inner:hover {
+    color: var(--ink-soft);
+}
+
+.site-footer__cat {
+    height: 22px;
+    width: auto;
+    display: block;
+    flex: none;
+    transition: transform .18s ease;
+}
+
+/* the cat gives a little pounce when you reach for it */
+.site-footer__inner:hover .site-footer__cat {
+    transform: translateY(-2px) rotate(-5deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .site-footer__cat {
+        transition: none;
+    }
+
+    .site-footer__inner:hover .site-footer__cat {
+        transform: none;
+    }
+}
+
+@media (max-width: 575.98px) {
+    .box-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 400px) {
+    .box-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ── File-type icon slot (poster fallback in file rows) ──────────────────────
+   Same 80×48 footprint as .film-thumb, but a kraft chip with a Bootstrap Icons
+   glyph + extension text, tinted per kind. Rendered by _FileIcon.cshtml. */
+.type-thumb {
+    flex: none;
+    width: 80px;
+    height: 48px;
+    border-radius: .3rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .05rem;
+    background: var(--kraft-sub);
+    border: 1px solid var(--kraft-line);
+}
+
+.type-thumb .bi {
+    font-size: 1.15rem;
+    line-height: 1;
+}
+
+.type-thumb__ext {
+    font-family: var(--mono);
+    font-size: .56rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--ink-soft);
+    line-height: 1;
+}
+
+.type-thumb--video { color: var(--tape-deep); }
+.type-thumb--image { color: var(--open); }
+.type-thumb--audio { color: var(--brand-deep); }
+.type-thumb--pdf { color: var(--stamp); }
+.type-thumb--file { color: var(--ink-faint); }
+
+/* Shares grid: the no-poster placeholder shows the same file-type glyph + extension. */
+.film-card__ph {
+    flex-direction: column;
+    gap: .15rem;
+}
+
+.film-card__ph .bi {
+    font-size: 1.7rem;
+    line-height: 1;
+}
+
+.film-card__ph .film-card__ph-ext {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .06em;
+}
+
+/* ── Type-filter chips (sit beside the sortbar in a list header) ──────────── */
+.filterbar {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    flex-wrap: wrap;
+}
+
+.filter-chip {
+    font-size: .82rem;
+    text-decoration: none;
+    color: var(--ink-soft);
+    padding: .1rem .5rem;
+    border: 1px solid var(--kraft-line);
+    border-radius: 1rem;
+    white-space: nowrap;
+}
+
+.filter-chip:hover {
+    color: var(--tape-deep);
+    background: var(--kraft-sub);
+}
+
+.filter-chip.is-active {
+    color: var(--ink);
+    font-weight: 700;
+    background: var(--kraft-sub);
+    border-color: var(--kraft-edge);
+}
+
+.filter-chip.is-disabled {
+    opacity: .4;
+    pointer-events: none;
+}
+
+.filter-chip__count {
+    color: var(--ink-faint);
+    font-size: .72rem;
+}
+
+@media (max-width: 575.98px) {
+    .filterbar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+}
+
+/* Uploader chip: a stable colour dot + friendly name derived from the anonymous uploader's token,
+   so a box owner can tell one visitor's drops from another's. A link (on a box page) filters to just
+   that uploader; a static label (dashboard list) just identifies. */
+.up-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    text-decoration: none;
+    color: var(--ink-soft);
+    white-space: nowrap;
+}
+
+a.up-chip:hover {
+    color: var(--tape-deep);
+    text-decoration: underline;
+}
+
+.up-chip--static {
+    cursor: default;
+}
+
+.up-dot {
+    width: .6rem;
+    height: .6rem;
+    border-radius: 50%;
+    flex: none;
+    /* Inset hairline so a pale dot still reads against the kraft background. */
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+}

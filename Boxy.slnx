@@ -1,0 +1,5 @@
+<Solution>
+    <Project Path="Boxy.Data/Boxy.Data.csproj"/>
+    <Project Path="Boxy.Tests/Boxy.Tests.csproj"/>
+    <Project Path="Boxy.Web/Boxy.Web.csproj"/>
+</Solution>

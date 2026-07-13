@@ -1,0 +1,77 @@
+@model PlatformSettings
+@{
+    ViewData["Title"] = "Settings";
+    ViewData["SettingsTab"] = "platform";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Platform</h2>
+</div>
+<p class="text-secondary small">Registration and content retention for this instance.</p>
+
+<div class="card" style="max-width: 640px;">
+    <div class="card-body">
+        <form method="post" action="/settings">
+            @Html.AntiForgeryToken()
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="registrationEnabled" value="true" class="form-check-input" id="reg"
+                       role="switch" @(Model.RegistrationEnabled ? "checked" : "")/>
+                <label class="form-check-label" for="reg">Allow anyone to register</label>
+            </div>
+            <div class="form-text mb-4">
+                When on, visitors can create their own account at <span class="mono">/register</span> and manage
+                their own boxes and shares. When off, only admins add accounts here.
+            </div>
+
+            <label class="form-label" for="retention">Auto-expire regular users' content after</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="retentionDays" id="retention" class="form-control" min="0" max="3650"
+                       value="@Model.RetentionDays"/>
+                <span class="input-group-text text-secondary">days</span>
+            </div>
+            <div class="form-text mb-4">
+                A regular user's new boxes and shares stop working after this many days, then are deleted
+                @Retention.GraceDays days later. Set <span class="mono">0</span> to never expire. Your own
+                content (and anything created so far) is never auto-deleted.
+            </div>
+
+            <label class="form-label" for="maxupload">Max upload size for regular users</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="maxUploadMb" id="maxupload" class="form-control" min="0" max="1048576"
+                       value="@Model.MaxUploadMb"/>
+                <span class="input-group-text text-secondary">MB</span>
+            </div>
+            <div class="form-text mb-4">
+                Largest single file a regular user - or someone dropping into their box - can upload. Set
+                <span class="mono">0</span> for no limit. Your own uploads are never capped.
+            </div>
+
+            <label class="form-label" for="quota">Default storage per regular user</label>
+            <div class="input-group mb-1" style="max-width: 18rem;">
+                <input type="number" name="defaultUserQuotaMb" id="quota" class="form-control" min="0" max="104857600"
+                       value="@Model.DefaultUserQuotaMb"/>
+                <span class="input-group-text text-secondary">MB</span>
+            </div>
+            <div class="form-text mb-4">
+                Total content a regular user's account may hold - their shares plus the drop-offs collected
+                in their boxes. Set <span class="mono">0</span> for no limit. Override it per account on the
+                Users tab. Your own account is never capped.
+            </div>
+
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="allowInternalWebhooks" value="true" class="form-check-input" id="intwh"
+                       role="switch" @(Model.AllowInternalWebhooks ? "checked" : "")/>
+                <label class="form-check-label" for="intwh">Allow box webhooks to reach internal addresses</label>
+            </div>
+            <div class="form-text mb-4">
+                Off by default, so a box webhook can't be pointed at a private/loopback address. Turn on
+                only if you post to an internal service (n8n, a Slack relay, Home Assistant) on your network.
+            </div>
+
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+</div>

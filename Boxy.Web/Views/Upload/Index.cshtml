@@ -1,0 +1,79 @@
+@model UploadPageViewModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>@Brand.Title(Model.BucketName)</title>
+    <meta name="robots" content="noindex"/>
+    <link rel="icon" type="image/png" href="/img/favicon.png" asp-append-version="true"/>
+    <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" asp-append-version="true"/>
+    <link rel="stylesheet" href="/lib/bootstrap/css/bootstrap.min.css" asp-append-version="true"/>
+    <link rel="stylesheet" href="/css/custom.css" asp-append-version="true"/>
+</head>
+<body class="app-shell">
+<main class="container py-4 py-md-5" style="max-width: 600px;">
+    @* Content first - lead with the box the visitor is dropping into; brand signs off in the footer. *@
+    <h1 class="h2 mb-1 d-flex align-items-center gap-2">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" style="color:var(--brand);flex:none" aria-hidden="true">
+            <path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/>
+            <path d="M3 8l9 5 9-5"/>
+            <path d="M12 13v8"/>
+        </svg>
+        <span>@Model.BucketName</span>
+    </h1>
+
+    @if (!Model.IsOpen)
+    {
+        <p class="text-secondary">This box is closed for uploads right now.</p>
+    }
+    else
+    {
+        <p class="text-secondary mb-4">Add your files below.</p>
+
+        @* No-JS fallback posts the form; with JS the chunked engine takes over and auto-starts. *@
+        <form id="uploadForm" method="post" action="/u/@Model.BucketSlug" enctype="multipart/form-data"
+              data-chunk-url="/api/u/@Model.BucketSlug/chunk"
+              data-complete-url="/api/u/@Model.BucketSlug/complete"
+              data-delete-base="/u/@Model.BucketSlug/delete"
+              data-max-bytes="@(Model.MaxBytes > 0 ? Model.MaxBytes.ToString() : null)">
+            <label class="dropzone mb-3">
+                <input type="file" name="files" multiple/>
+                <span class="up-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path
+                            d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line
+                            x1="12" y1="3" x2="12" y2="15"/></svg>
+                </span>
+                <div class="up-title">Tap to choose files</div>
+                <div class="small">or drag them here. Any size, several at once</div>
+            </label>
+            <button type="submit" class="btn btn-primary btn-lg w-100">Upload</button>
+        </form>
+
+        <ul class="list-group my-3" id="queue"></ul>
+        <div id="readout" class="alert alert-secondary py-2 small d-none"></div>
+
+        @* Hidden until the visitor has at least one upload - revealed by upload.js on completion. *@
+        <div id="mineSection" class="@(Model.MyUploads.Count == 0 ? "d-none" : "")">
+            <h2 class="h6 text-secondary text-uppercase mt-4 mb-2">Your uploads</h2>
+            <ul class="list-group" id="mine">
+                @foreach (var m in Model.MyUploads)
+                {
+                    <partial name="_MineRow" model="new MineRowVm(m, Model.BucketSlug)"/>
+                }
+            </ul>
+        </div>
+
+        <script src="/js/boxy.js" asp-append-version="true"></script>
+        <script src="/js/upload.js" asp-append-version="true"></script>
+    }
+</main>
+<partial name="_Footer"/>
+</body>
+</html>
+

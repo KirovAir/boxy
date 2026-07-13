@@ -1,0 +1,50 @@
+@model MineRowVm
+@{
+    var m = Model.Item;
+    var kind = MediaKinds.FacetOf(m.Extension);
+    var lightbox = MediaKinds.LightboxKind(m);
+    var status = m.Status switch
+    {
+        MediaStatus.Ready => "ready",
+        MediaStatus.Failed => "failed",
+        _ => "processing"
+    };
+}
+@* The uploader's own file row. Same visual language as the dashboard's _DropFileRow (poster -> type icon
+   fallback, kind/size/resolution/duration meta), but with the anonymous uploader's delete action. *@
+<li class="list-group-item drop-row d-flex align-items-center gap-3 mine-item" data-slug="@m.Slug"
+    data-status="@status" data-kind="@lightbox">
+    @if (m.PosterFileName is not null)
+    {
+        <img src="/poster/@m.Slug?v=@m.PosterVersion()" class="film-thumb" alt="" width="80" height="48"
+             style="object-fit:cover;" loading="lazy"/>
+    }
+    else
+    {
+        <partial name="_FileIcon" model="(kind, m.Extension)"/>
+    }
+    <span class="flex-grow-1 text-truncate">
+        <span class="d-block text-truncate">@m.Title</span>
+        <span class="small text-secondary mono d-block text-truncate">
+            @m.Kind.ToString().ToUpperInvariant()
+            <text>· @Format.Bytes(m.SizeBytes)</text>
+            @if (Format.Dimensions(m.Width, m.Height) is { Length: > 0 } dim)
+            {
+                <text>· @dim</text>
+            }
+            @if ((m.Kind == MediaKind.Video || m.Kind == MediaKind.Audio)
+                 && Format.Duration(m.DurationSeconds) is { Length: > 0 } dur)
+            {
+                <text>· @dur</text>
+            }
+            @if (m.Status != MediaStatus.Ready)
+            {
+                var st = MediaKinds.StatusStamp(m.Status);
+                <span class="stamp @st.Cls ms-1">@st.Text</span>
+            }
+        </span>
+    </span>
+    <form method="post" class="del-mine" action="/u/@Model.BucketSlug/delete/@m.Slug">
+        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+    </form>
+</li>

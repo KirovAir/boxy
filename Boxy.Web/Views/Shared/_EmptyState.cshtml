@@ -1,0 +1,8 @@
+@model string
+@* Shared empty-state card: the box-cat mascot + a message. One place, used by every "nothing here yet" list. *@
+<div class="card mb-4">
+    <div class="card-body text-center py-4">
+        <img src="/img/boxy-cat-sm.png" alt="" class="mascot mascot--sm mx-auto mb-2" asp-append-version="true"/>
+        <div class="text-secondary">@Model</div>
+    </div>
+</div>

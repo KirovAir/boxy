@@ -1,0 +1,21 @@
+@model ExpiryReminderEmail
+@{
+    Layout = "~/Views/Emails/_EmailLayout.cshtml";
+    var noun = Model.Items.Count == 1 ? "item" : "items";
+}
+<h2 style="margin:0 0 8px;">@Model.Items.Count @noun expiring</h2>
+<p style="margin:0 0 16px;">These have gone offline and will be deleted after their grace period. Restore anything you
+    want to keep.</p>
+<table style="border-collapse:collapse;font-size:14px;">
+    @foreach (var i in Model.Items)
+    {
+        <tr>
+            <td style="padding:4px 12px 4px 0;">@i.Name <span style="color:#9a876c;">(@i.Kind)</span></td>
+            <td style="padding:4px 0;color:#6b6156;white-space:nowrap;">deletes @i.DeletesOn</td>
+        </tr>
+    }
+</table>
+@if (Model.Link is not null)
+{
+    <partial name="~/Views/Emails/_EmailButton.cshtml" model='new EmailButton(Model.Link, "Keep them")'/>
+}

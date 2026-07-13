@@ -1,0 +1,9 @@
+@model (MediaKind Kind, string Ext)
+@* The poster fallback: a Bootstrap Icons file-type glyph plus the extension text, in the same 80×48 slot
+   a poster thumbnail occupies. The kind → glyph map lives once in MediaKinds.IconClass. Extension text is
+   shown alongside the glyph so kind is legible without relying on colour (CVD-safe) and an unknown type
+   still reads (e.g. "DWG"). *@
+<span class="type-thumb type-thumb--@Model.Kind.ToString().ToLowerInvariant()" aria-hidden="true">
+    <i class="bi @MediaKinds.IconClass(Model.Kind)"></i>
+    <span class="type-thumb__ext">@Model.Ext.TrimStart('.').ToUpperInvariant()</span>
+</span>

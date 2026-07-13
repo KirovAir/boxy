@@ -1,0 +1,45 @@
+# Local emulators for developing/testing the pluggable storage back-ends and email notifications.
+# Not for production - these stand in for real S3, Azure Blob, and an SMTP server.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Then point Boxy at them via appsettings.Development.json (see the Storage:* and Email:* keys).
+services:
+  # S3-compatible emulator (MinIO - license-free and light; the AWS SDK talks to it path-style).
+  # S3 API on http://localhost:9000, web console on http://localhost:9001.
+  minio:
+    image: minio/minio:latest
+    container_name: boxy-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: boxy
+      MINIO_ROOT_PASSWORD: boxytestsecret
+    volumes:
+      - minio-data:/data
+
+  # Azure Blob emulator. Blob endpoint http://localhost:10000/devstoreaccount1 with the
+  # well-known Azurite dev account key.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: boxy-azurite
+    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --skipApiVersionCheck"
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite-data:/data
+
+  # Catches all outbound SMTP so notification emails are viewable in a web UI instead of being sent.
+  # SMTP on 1025, web UI at http://localhost:1080.
+  mailcatcher:
+    image: dockage/mailcatcher:0.9.0
+    container_name: boxy-mailcatcher
+    ports:
+      - "1025:1025"
+      - "1080:1080"
+
+volumes:
+  minio-data:
+  azurite-data:

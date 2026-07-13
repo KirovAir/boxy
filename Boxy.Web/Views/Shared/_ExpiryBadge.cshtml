@@ -1,0 +1,18 @@
+@model DateTime?
+@* A small countdown stamp for a box or share. Nothing renders when it never expires (admin content,
+   or retention off). Grey while counting down; red once the link is dead and it's awaiting deletion. *@
+@if (Model is DateTime e)
+{
+    var now = DateTime.UtcNow;
+    if (Retention.IsExpired(e, now))
+    {
+        var daysLeft = Math.Max(0, (int)Math.Ceiling((Retention.DeleteAfter(e) - now).TotalDays));
+        <span class="stamp stamp--failed" title="The link has expired; the file is deleted after the grace period.">Expired · deletes in @daysLeft day@(daysLeft == 1 ? "" : "s")</span>
+    }
+    else
+    {
+        var days = Math.Max(1, (int)Math.Ceiling((e - now).TotalDays));
+        <span class="stamp stamp--draft"
+              title="The link stops working on this date; the file is deleted a few days later.">Expires in @days day@(days == 1 ? "" : "s")</span>
+    }
+}

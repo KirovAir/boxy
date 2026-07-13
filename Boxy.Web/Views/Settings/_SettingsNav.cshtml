@@ -1,0 +1,11 @@
+@{
+    var active = ViewData["SettingsTab"] as string;
+}
+@* Sub-nav for the admin platform area, styled like the dashboard tabs. *@
+<div class="admin-tabs mb-4">
+    <a href="/settings" class="admin-tab @(active == "platform" ? "is-active" : "")">Platform</a>
+    <a href="/settings/users" class="admin-tab @(active == "users" ? "is-active" : "")">Users</a>
+    <a href="/settings/email" class="admin-tab @(active == "email" ? "is-active" : "")">Email</a>
+    <a href="/settings/video" class="admin-tab @(active == "video" ? "is-active" : "")">Video</a>
+    <a href="/settings/stats" class="admin-tab @(active == "stats" ? "is-active" : "")">Statistics</a>
+</div>

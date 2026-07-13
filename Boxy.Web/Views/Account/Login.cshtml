@@ -1,0 +1,51 @@
+@{
+    ViewData["Title"] = "Log in";
+    ViewData["HideNav"] = true; // the centered mascot + wordmark is the brand here - no nav logo needed
+}
+<div class="row justify-content-center">
+    <div class="col-sm-8 col-md-5 col-lg-4">
+        <div class="text-center mt-5 mb-3">
+            <img src="/img/boxy-cat-sm.png" alt="" class="mascot mx-auto mb-2" asp-append-version="true"/>
+            <img src="/img/boxy-logo.png" alt="Boxy" class="brand-logo mx-auto" style="height:34px"
+                 asp-append-version="true"/>
+            <p class="text-secondary small mt-2 mb-0 mx-auto" style="max-width:23rem">
+                Videos, images, PDFs, anything. Drop it in a box, get a link, send it anywhere.
+            </p>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <h1 class="h5 card-title mb-3">Log in</h1>
+                @if (ViewBag.Error is string error)
+                {
+                    <div class="alert alert-danger py-2">@error</div>
+                }
+                <form method="post" action="/login">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="returnUrl" value="@(ViewBag.ReturnUrl as string)"/>
+                    <div class="mb-3">
+                        <label class="form-label">Username or email</label>
+                        <input type="text" name="usernameOrEmail" class="form-control" autocomplete="username" required
+                               autofocus/>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control" autocomplete="current-password"
+                               required/>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input type="checkbox" name="rememberMe" value="true" class="form-check-input" id="rememberMe"
+                               checked/>
+                        <label class="form-check-label" for="rememberMe">Remember me</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Log in</button>
+                </form>
+                @if (ViewBag.RegistrationEnabled is true)
+                {
+                    <p class="text-center text-secondary small mt-3 mb-0">
+                        New here? <a href="/register">Create an account</a>
+                    </p>
+                }
+            </div>
+        </div>
+    </div>
+</div>

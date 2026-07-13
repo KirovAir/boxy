@@ -1,0 +1,22 @@
+@model DropOffEmail
+@{
+    Layout = "~/Views/Emails/_EmailLayout.cshtml";
+    var noun = Model.Files.Count == 1 ? "file" : "files";
+    var total = Format.Bytes(Model.Files.Sum(f => f.Bytes));
+}
+<h2 style="margin:0 0 4px;">@Model.Files.Count new @noun dropped in</h2>
+<p style="margin:0 0 16px;font-size:18px;font-weight:600;">@Model.BoxName</p>
+<table style="border-collapse:collapse;font-size:14px;">
+    @foreach (var f in Model.Files)
+    {
+        <tr>
+            <td style="padding:4px 12px 4px 0;">@f.Name</td>
+            <td style="padding:4px 0;color:#6b6156;white-space:nowrap;">@Format.Bytes(f.Bytes)</td>
+        </tr>
+    }
+</table>
+<p style="margin:16px 0 0;color:#6b6156;font-size:13px;">@Model.Files.Count @noun, @total total.</p>
+@if (Model.Link is not null)
+{
+    <partial name="~/Views/Emails/_EmailButton.cshtml" model='new EmailButton(Model.Link, "Open the box")'/>
+}

@@ -1,0 +1,49 @@
+@model ShareLockedViewModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>@Brand.Title("Password required")</title>
+    @* Minimal, generic metadata: a locked share leaks nothing (no title, description, or poster) to
+       link-preview crawlers, which never have the unlock cookie. *@
+    <meta name="robots" content="noindex"/>
+    <meta property="og:title" content="Password-protected share"/>
+    <meta property="og:description" content="Enter the password to view this share."/>
+    <meta property="og:image" content="/img/og-default.png"/>
+    <link rel="icon" type="image/png" href="/img/favicon.png" asp-append-version="true"/>
+    <link rel="stylesheet" href="/lib/bootstrap/css/bootstrap.min.css" asp-append-version="true"/>
+    <link rel="stylesheet" href="/css/custom.css" asp-append-version="true"/>
+</head>
+<body class="share-page">
+<main class="share-main">
+    <div class="share-body" style="max-width: 24rem;">
+        <div class="share-file">
+            <div class="share-file__icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+            </div>
+            <div class="share-file__name">Password required</div>
+            <div class="share-file__meta">This share is protected. Enter its password to view it.</div>
+            @if (Model.HasError)
+            {
+                <div class="alert alert-danger py-2 small">That password didn't match. Try again.</div>
+            }
+            <form method="post" action="@Model.PostPath">
+                @Html.AntiForgeryToken()
+                <input type="password" name="password" class="form-control mb-2" autocomplete="off" autofocus required
+                       placeholder="Password"/>
+                <button type="submit" class="btn btn-primary w-100">Unlock</button>
+            </form>
+        </div>
+    </div>
+</main>
+<partial name="_Footer"/>
+</body>
+</html>

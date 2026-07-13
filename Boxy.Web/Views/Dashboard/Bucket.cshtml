@@ -1,0 +1,151 @@
+@model BucketDetailViewModel
+@{
+    ViewData["Title"] = Model.Bucket.Name;
+}
+
+@{
+    var header = new PageHeader
+    {
+        Title = Model.Bucket.Name,
+        Icon = PageIcon.Box,
+        Back = true,
+        Stamps = new[]
+        {
+            (Model.Bucket.IsOpen ? "Open" : "Closed", Model.Bucket.IsOpen ? "stamp--open" : "stamp--closed"),
+            ($"{Model.Files.Total} file{(Model.Files.Total == 1 ? "" : "s")}", "stamp--count")
+        },
+        Created = Model.Bucket.CreatedDate
+    };
+}
+<partial name="_PageHeader" model="header"/>
+
+@{ var boxUrl = $"{Model.BaseUrl}/u/{Model.Bucket.Slug}"; }
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="text-secondary small mb-1">Upload link - share it so others can drop files into this box</div>
+        <a href="@boxUrl" target="_blank" class="text-break mono d-block mb-2">@boxUrl</a>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="@boxUrl" target="_blank" class="btn btn-sm btn-outline-primary">Open</a>
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-copy="@boxUrl"
+                    data-copy-label="Copied!">Copy link
+            </button>
+            <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/toggle">
+                @Html.AntiForgeryToken()
+                <button type="submit"
+                        class="btn btn-sm btn-outline-secondary">@(Model.Bucket.IsOpen ? "Close uploads" : "Reopen uploads")</button>
+            </form>
+            <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/delete"
+                  data-confirm="Delete this box? Files dropped into it are kept in your drop-off files."
+                  data-confirm-label="Delete box">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+        </div>
+        @if (Model.Bucket.ExpiresAt is not null)
+        {
+            <div class="d-flex align-items-center gap-2 mt-3 pt-3 border-top">
+                <partial name="_ExpiryBadge" model="Model.Bucket.ExpiresAt"/>
+                <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/keep">
+                    @Html.AntiForgeryToken()
+                    <button type="submit"
+                            class="btn btn-sm btn-outline-secondary">@(Retention.IsExpired(Model.Bucket.ExpiresAt, DateTime.UtcNow) ? "Restore" : "Keep")</button>
+                </form>
+            </div>
+        }
+    </div>
+</div>
+
+@{
+    var ownerEmail = Model.OwnerEmail;
+    var hasEmail = ownerEmail is not null && ownerEmail.Contains('@');
+}
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h6 mb-1">Notifications</h2>
+        <p class="text-secondary small mb-3">Get told when files are dropped in. A burst of uploads is batched into one
+            message.</p>
+        <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/notifications">
+            @Html.AntiForgeryToken()
+
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="emailOnDrop" value="true" class="form-check-input" id="emailondrop"
+                       role="switch"
+                       @(Model.Bucket.EmailOnDrop ? "checked" : "") @(hasEmail ? "" : "disabled")/>
+                <label class="form-check-label" for="emailondrop">Email me on new drop-offs</label>
+            </div>
+            <div class="form-text mb-3">
+                @if (hasEmail)
+                {
+                    <text>Sent to <span class="mono">@ownerEmail</span>.</text>
+                }
+                else
+                {
+                    <text>Add an email to your account to turn this on.</text>
+                }
+            </div>
+
+            <label class="form-label small mb-1" for="webhookurl">Webhook URL <span class="text-secondary fw-normal">(optional)</span></label>
+            <input type="url" name="webhookUrl" id="webhookurl" class="form-control form-control-sm mb-1"
+                   style="max-width: 32rem;"
+                   placeholder="https://your-service.example/hook" value="@Model.Bucket.WebhookUrl"/>
+            <div class="form-text mb-3">POSTs a JSON summary - wire it to Slack, n8n, or your own service.</div>
+
+            <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
+    </div>
+</div>
+
+@{
+    // "Filtered" means the list is narrowed by anything - a type chip or an uploader - so the empty
+    // state, the download-all count, and the toolbar visibility all react to the uploader filter too.
+    var filtered = !Model.Filter.IsEmpty || Model.ActiveUploader is not null;
+}
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Files</h2>
+    @if (Model.Files.Total > 0 || filtered)
+    {
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            @* Download-all zips the whole box, so only show a count when the list isn't filtered. *@
+            <a href="/dashboard/buckets/@Model.Bucket.Id/download-all" class="btn btn-sm btn-outline-primary">
+                Download all@(!filtered && Model.Files.Total > 0 ? $" ({Model.Files.Total})" : "")
+            </a>
+            <partial name="_FilterBar" model='new FilterBarVm(Model.Filter, Model.KindCounts, "t", "p")'/>
+            <partial name="_SortBar" model='new SortBarVm(MediaSort.Files, Model.Files.Sort, "s", "p")'/>
+        </div>
+    }
+</div>
+<p class="text-secondary small">Dropped into this box by others. Yours to download.</p>
+
+@if (Model.ActiveUploader is { } who)
+{
+    <div class="up-banner small text-secondary mb-2 d-flex align-items-center gap-2 flex-wrap">
+        <span>Showing uploads from</span>
+        <span class="up-chip up-chip--static">
+            <span class="up-dot" style="background:@who.Color"></span>@who.Name
+        </span>
+        <a href="@Context.Request.UrlWith(("u", null), ("p", "1"))">Clear</a>
+    </div>
+}
+
+@if (Model.Files.Total == 0)
+{
+    <partial name="_EmptyState" model='filtered ? "No files in this box match this filter." : "No files dropped in this box yet."'/>
+}
+else
+{
+    <div data-bulk>
+        <partial name="_BulkBar"
+                 model='new BulkBarVm { ReturnUrl = Context.Request.Path + Context.Request.QueryString, ShowDownload = true, DeleteConfirm = "Delete the selected files? This cannot be undone." }'/>
+        <div class="card">
+            <div class="card-body">
+                <ul class="list-group">
+                    @foreach (var m in Model.Files.Items)
+                    {
+                        <partial name="_DropFileRow" model='new DropFileRow(m, UploaderKey: "u", PageKey: "p")'/>
+                    }
+                </ul>
+                <partial name="_Pager" model='PagerVm.For(Model.Files, "p", "files")'/>
+            </div>
+        </div>
+    </div>
+}

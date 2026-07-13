@@ -1,0 +1,9 @@
+**/.git
+**/.gitignore
+**/bin
+**/obj
+**/*.md
+**/storage
+**/*.db
+**/*.db-wal
+**/*.db-shm
