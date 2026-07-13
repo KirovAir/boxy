@@ -3,8 +3,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/KirovAir/boxy/actions/workflows/build-and-deploy.yml"><img src="https://github.com/KirovAir/boxy/actions/workflows/build-and-deploy.yml/badge.svg" alt="Build and Deploy"/></a>
+  <a href="https://github.com/KirovAir/boxy/pkgs/container/boxy"><img src="https://img.shields.io/badge/ghcr.io-kirovair%2Fboxy-blue?logo=docker" alt="Docker Image"/></a>
   <img src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white" alt=".NET 10"/>
-  <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker ready"/>
   <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"/>
 </p>
 
@@ -36,10 +37,7 @@ A little bit similar to WeTransfer but our mascot is a cat. 🐱
 ```yaml
 services:
   boxy:
-    build:
-      context: .
-      dockerfile: Boxy.Web/Dockerfile
-    image: boxy:latest
+    image: ghcr.io/kirovair/boxy:latest
     container_name: boxy
     restart: unless-stopped
     ports:
@@ -53,7 +51,7 @@ services:
       - ./data:/data
 ```
 
-Clone the repo, set a strong `Admin__Password`, then `docker compose up -d --build` and sign in at `http://localhost:3895`.
+Save this as `docker-compose.yml`, set a strong `Admin__Password`, then `docker compose up -d` and sign in at `http://localhost:3895`. That's it.
 
 ## What's in the box
 
@@ -76,7 +74,7 @@ Perfectly happy on a small, cheap VPS.
 
 ## Installation
 
-Boxy ships as a single container with FFmpeg bundled. It needs one volume at `/data` and an admin password.
+Boxy ships as a single container with FFmpeg bundled. It needs one volume at `/data` and an admin password. Images are published to [GitHub Container Registry](https://github.com/KirovAir/boxy/pkgs/container/boxy) for amd64 and arm64.
 
 ### Docker Run
 
@@ -87,7 +85,8 @@ docker run -d \
   -e Admin__Password="change-me" \
   -e PUID=1000 -e PGID=1000 \
   -v "$(pwd)/data:/data" \
-  boxy:latest
+  --restart unless-stopped \
+  ghcr.io/kirovair/boxy:latest
 ```
 
 ### Build from source

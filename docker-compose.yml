@@ -1,11 +1,8 @@
 # Boxy - self-hosted file and media sharing.
-# Set a strong Admin__Password below, then build and run: docker compose up -d --build
+# Set a strong Admin__Password below, then run: docker compose up -d
 services:
   boxy:
-    build:
-      context: .
-      dockerfile: Boxy.Web/Dockerfile
-    image: boxy:latest
+    image: ghcr.io/kirovair/boxy:latest
     container_name: boxy
     restart: unless-stopped
     ports:
