@@ -140,6 +140,62 @@
 <partial name="_Footer"/>
 <script>
     (function () {
+        // iOS gives up for good when a range request dies mid-stream (a scrub burst tripping the
+        // proxy, a Wi-Fi/cellular hand-off): the element lands in a fatal error or an endless stall
+        // and the native controls never retry. Desktop browsers reconnect on their own. So remember
+        // the position, reload the source, seek back and resume - capped, so a genuinely dead link
+        // still surfaces the browser's error UI instead of looping.
+        var media = document.querySelector('video.share-video, .share-file audio');
+        if (!media) return;
+
+        var attempts = 0;
+        var lastTime = 0;
+        var stuckMs = 0;
+
+        function recover() {
+            if (attempts >= 3) return;
+            attempts++;
+            var at = media.currentTime;
+            var resume = !media.paused && !media.ended;
+            media.load();
+            media.addEventListener('loadedmetadata', function seekBack() {
+                media.removeEventListener('loadedmetadata', seekBack);
+                if (at > 0) media.currentTime = at;
+                if (resume) {
+                    var p = media.play();
+                    if (p && p.catch) p.catch(function () {});
+                }
+            });
+        }
+
+        media.addEventListener('error', recover);
+        var source = media.querySelector('source');
+        if (source) source.addEventListener('error', function () {
+            // A source error before anything ever played means the format is unsupported: let the
+            // fallback text show. After playback started it means the connection died: recover.
+            if (media.currentTime > 0) recover();
+        });
+
+        // The silent failure mode: no error event, the pipeline just stops making progress. If the
+        // clock hasn't moved for 15s while it should be playing and buffering, kick the same recovery.
+        setInterval(function () {
+            if (media.paused || media.ended) {
+                stuckMs = 0;
+            } else if (media.currentTime !== lastTime) {
+                stuckMs = 0;
+                attempts = 0; // real progress again: future hiccups may recover anew
+            } else if (media.readyState < 3) { // below HAVE_FUTURE_DATA: starved, not just idle
+                stuckMs += 3000;
+                if (stuckMs >= 15000) {
+                    stuckMs = 0;
+                    recover();
+                }
+            }
+            lastTime = media.currentTime;
+        }, 3000);
+    })();
+
+    (function () {
         var likeBtn = document.getElementById('likeBtn');
         if (!likeBtn) return;
         likeBtn.addEventListener('click', function () {
