@@ -137,14 +137,20 @@ public class SettingsController(
             MaxLongEdge = s.MaxLongEdge,
             Preset = s.Preset,
             MaxrateKbps = s.MaxrateKbps,
+            DefaultProfile = s.DefaultProfile,
             FromDb = fromDb
         });
     }
 
     [HttpPost("video")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Video(int crf, int maxLongEdge, string? preset, int maxrateKbps, CancellationToken ct)
+    public async Task<IActionResult> Video(int crf, int maxLongEdge, string? preset, int maxrateKbps,
+        string? defaultProfile, CancellationToken ct)
     {
+        // Settings are stored as one JSON blob, so a field the form doesn't send is not "unchanged", it is
+        // gone: build the new value from the stored one rather than from nothing.
+        var current = await videoProvider.GetEffectiveAsync(ct);
+
         // Clamping and the preset allowlist live in VideoSettings.Normalized(), applied by the provider -
         // one choke point for the form, the environment fallback, and a hand-edited DB row alike.
         await videoProvider.SaveAsync(new VideoSettings
@@ -152,7 +158,8 @@ public class SettingsController(
             Crf = crf,
             MaxLongEdge = maxLongEdge,
             Preset = preset ?? "",
-            MaxrateKbps = maxrateKbps
+            MaxrateKbps = maxrateKbps,
+            DefaultProfile = ConversionProfiles.Parse(defaultProfile) ?? current.DefaultProfile
         }, ct);
 
         this.FlashSuccess("Video settings saved. They apply to videos uploaded from now on.");

@@ -19,8 +19,9 @@ public class UploaderVm
     public string Hint { get; init; } = "or click to browse. Any size";
     public string ButtonText { get; init; } = "Upload";
 
-    /// <summary>Show the "keep original (don't re-encode)" opt-out (new share uploads only).</summary>
-    public bool KeepOriginalOption { get; init; }
+    /// <summary>Offer the video conversion choice (new share uploads only). A replace keeps the item's
+    /// existing profile, and the public drop-off form takes the box's default instead of asking.</summary>
+    public bool ConversionOption { get; init; }
 
     /// <summary>Authenticated forms carry the antiforgery token; the anonymous drop-off form doesn't.</summary>
     public bool Antiforgery { get; init; } = true;

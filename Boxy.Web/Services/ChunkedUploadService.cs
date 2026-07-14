@@ -287,14 +287,14 @@ public partial class ChunkedUploadService(
         bool published,
         string? uploaderToken,
         int? ownerId = null,
-        bool keepOriginal = false,
+        ConversionProfile profile = ConversionProfiles.Fallback,
         DateTime? expiresAt = null,
         long maxBytes = 0,
         int? quotaOwnerId = null,
         CancellationToken ct = default)
     {
         return AssembleAndUseAsync(uploadId, layout,
-            assembled => ingestion.IngestAsync(assembled, fileName, bucketId, published, uploaderToken, ownerId, keepOriginal, expiresAt, maxBytes, quotaOwnerId, ct),
+            assembled => ingestion.IngestAsync(assembled, fileName, bucketId, published, uploaderToken, ownerId, profile, expiresAt, maxBytes, quotaOwnerId, ct),
             ct);
     }
 

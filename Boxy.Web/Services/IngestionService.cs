@@ -27,7 +27,7 @@ public class IngestionService(
         bool published,
         string? uploaderToken = null,
         int? ownerId = null,
-        bool keepOriginal = false,
+        ConversionProfile profile = ConversionProfiles.Fallback,
         DateTime? expiresAt = null,
         long maxBytes = 0,
         int? quotaOwnerId = null,
@@ -79,7 +79,7 @@ public class IngestionService(
                 Published = published,
                 UploaderToken = uploaderToken,
                 OwnerId = ownerIdFinal,
-                KeepOriginal = keepOriginal,
+                Profile = profile,
                 ExpiresAt = expiresAt
             };
 

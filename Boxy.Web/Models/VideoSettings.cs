@@ -1,3 +1,5 @@
+using Boxy.Data.Entities;
+
 namespace Boxy.Web.Models;
 
 /// <summary>
@@ -27,6 +29,11 @@ public class VideoSettings
     /// 0 disables the ceiling (pure CRF).</summary>
     public int MaxrateKbps { get; set; } = 16000;
 
+    /// <summary>What happens to an uploaded video when neither the uploader nor the box says otherwise.
+    /// Unlike the knobs above this one is not just a quality dial: it decides how many files a video
+    /// becomes, so it is the setting that sets this server's disk and CPU bill.</summary>
+    public ConversionProfile DefaultProfile { get; set; } = ConversionProfiles.Fallback;
+
     /// <summary>The x264 presets we accept, fastest-to-slowest. "placebo" is excluded on purpose.</summary>
     public static readonly string[] AllowedPresets =
     [
@@ -46,7 +53,10 @@ public class VideoSettings
             Crf = Math.Clamp(Crf, 14, 35),
             MaxLongEdge = MaxLongEdge <= 0 ? 0 : Math.Clamp(MaxLongEdge, 480, 4320),
             MaxrateKbps = MaxrateKbps <= 0 ? 0 : Math.Clamp(MaxrateKbps, 500, 100_000),
-            Preset = preset is not null && AllowedPresets.Contains(preset) ? preset : "slow"
+            Preset = preset is not null && AllowedPresets.Contains(preset) ? preset : "slow",
+            // A JSON blob is easy to hand-edit and a form is easy to forge: an undefined enum member would
+            // otherwise fall through every switch in the worker and quietly transcode nothing.
+            DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback
         };
     }
 }

@@ -20,14 +20,13 @@
         <div class="up-title">@Model.Title</div>
         <div class="small">@Model.Hint</div>
     </label>
-    @if (Model.KeepOriginalOption)
+    @if (Model.ConversionOption)
     {
         <div class="form-check mb-3">
-            <input type="checkbox" name="keepOriginal" value="true" class="form-check-input" id="keepOriginal"/>
-            <label class="form-check-label" for="keepOriginal">Keep original (don't re-encode video)</label>
-            <div class="form-text">Skips transcoding and keeps the source codec. Only for videos whose codec your
-                viewers can play.
-            </div>
+            <input type="checkbox" name="profile" value="@ConversionProfile.AsUploaded" class="form-check-input"
+                   id="keepOriginal"/>
+            <label class="form-check-label" for="keepOriginal">@ConversionProfiles.Label(ConversionProfile.AsUploaded)</label>
+            <div class="form-text">@ConversionProfiles.Help(ConversionProfile.AsUploaded)</div>
         </div>
     }
     <button type="submit" class="btn btn-primary">@Model.ButtonText</button>

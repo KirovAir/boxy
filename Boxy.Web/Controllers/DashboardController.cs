@@ -21,6 +21,7 @@ public class DashboardController(
     UploadFinalizer finalizer,
     IBlobStore storage,
     MediaProcessor processor,
+    VideoSettingsProvider videoSettings,
     IEmailSender emailSender,
     EmailComposer emailComposer,
     IConfiguration config,
@@ -114,6 +115,14 @@ public class DashboardController(
         var me = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == UserId, ct);
         var settings = await db.GetSettingsAsync<PlatformSettings>(ct);
         return Retention.ExpiryFor(me?.Role == UserRole.Admin, settings.RetentionDays, DateTime.UtcNow);
+    }
+
+    /// <summary>What to do with a video uploaded here: what the uploader picked, else the instance
+    /// default. A dashboard upload is a share the uploader owns, so there is no box default in between.</summary>
+    private async Task<ConversionProfile> ProfileForUploadAsync(ConversionProfile? chosen, CancellationToken ct = default)
+    {
+        var settings = await videoSettings.GetEffectiveAsync(ct);
+        return ConversionProfiles.Resolve(chosen, null, settings.DefaultProfile);
     }
 
     /// <summary>The upload size cap for the current user (0 = unlimited). Admins are exempt.</summary>
@@ -284,7 +293,7 @@ public class DashboardController(
     [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
     public async Task<IActionResult> Upload(CancellationToken ct)
     {
-        var keepOriginal = Request.Form["keepOriginal"] == "true";
+        var profile = await ProfileForUploadAsync(ConversionProfiles.Parse(Request.Form["profile"]), ct);
         var expiry = await DefaultExpiryAsync(ct);
         var maxBytes = await MaxUploadBytesAsync(ct);
         var count = 0;
@@ -306,7 +315,7 @@ public class DashboardController(
             try
             {
                 await using var stream = file.OpenReadStream();
-                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, null, true, null, UserId, keepOriginal, expiry, maxBytes, UserId, ct);
+                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, null, true, null, UserId, profile, expiry, maxBytes, UserId, ct);
                 count++;
             }
             catch (QuotaExceededException)
@@ -393,15 +402,16 @@ public class DashboardController(
     [HttpPost("upload/complete")]
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> UploadComplete([FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name,
-        [FromQuery] long size, [FromQuery] long chunkSize, [FromQuery] bool keepOriginal, CancellationToken ct)
+        [FromQuery] long size, [FromQuery] long chunkSize, [FromQuery] string? profile, CancellationToken ct)
     {
         var layout = new UploadLayout(size, chunkSize, total);
+        var chosen = await ProfileForUploadAsync(ConversionProfiles.Parse(profile), ct);
         var expiry = await DefaultExpiryAsync(ct);
         var maxBytes = await MaxUploadBytesAsync(ct);
         var userId = UserId;
 
         var run = finalizer.StartOrJoin(uploadId, (services, jobCt) => AssembleAsync(services,
-            async chunked => (MediaItem?)await chunked.CompleteAsync(uploadId, layout, name, null, true, null, userId, keepOriginal, expiry, maxBytes, userId, jobCt)));
+            async chunked => (MediaItem?)await chunked.CompleteAsync(uploadId, layout, name, null, true, null, userId, chosen, expiry, maxBytes, userId, jobCt)));
 
         return await UploadResults.AwaitOrAcceptAsync(run);
     }

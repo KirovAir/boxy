@@ -31,6 +31,33 @@ public enum MediaKind
 }
 
 /// <summary>
+/// What Boxy does with an uploaded video. It has to be decided before the worker runs and there is no
+/// answer that is right for everyone, so it is picked at upload time (falling back to the box's default,
+/// then the instance default). Stored as its name, like <see cref="MediaStatus"/> and <see cref="MediaKind"/>.
+///
+/// Whatever the profile, <c>/f/{slug}</c> serves ONE file to a plain browser. The profile decides what
+/// that file is, and whether a second, better one is offered alongside it for the devices that can take it.
+/// </summary>
+public enum ConversionProfile
+{
+    /// <summary>Always produce an H.264 copy, and keep the source H.265 next to it when there is one. A
+    /// device with an HEVC decoder is offered the untouched original (HDR and all); everything else falls
+    /// back to the H.264 copy. Two files, so it costs the most disk and the most encoding time.</summary>
+    Best,
+
+    /// <summary>One H.264 file, capped at the admin's max resolution. Smallest and quickest.</summary>
+    Universal,
+
+    /// <summary>One H.264 file at the resolution it was uploaded at: no resolution cap, no bitrate
+    /// ceiling. For 4K and screen recordings, where the detail is the point.</summary>
+    FullSize,
+
+    /// <summary>Ship exactly what was uploaded. Remuxed to faststart so it streams, never re-encoded.
+    /// The uploader owns compatibility; a browser without the codec gets no video.</summary>
+    AsUploaded
+}
+
+/// <summary>
 /// One uploaded file. Storage is content-addressed: the physical bytes live at
 /// <c>{storage}/{ContentHash}{Extension}</c>, so re-uploading identical content
 /// never writes twice. A <see cref="Slug"/> gives it a stable share URL at
@@ -99,8 +126,28 @@ public class MediaItem : AuditableEntity
     /// blanket converter would shift these dates by the server's offset and corrupt them.</summary>
     public DateTime? CapturedAt { get; set; }
 
-    /// <summary>Content-addressed web-compatible H.264 mp4 produced when the original is not web-safe.</summary>
+    /// <summary>Content-addressed web-compatible mp4 produced when the original is not servable as-is.
+    /// Null means <c>/f/{slug}</c> serves the original bytes. The blob name carries the lane that made it
+    /// (<c>-h264</c>, <c>-h264-full</c>, <c>-asis</c>), so two items with identical content but different
+    /// profiles can never overwrite each other's output.</summary>
     public string? WebFileName { get; set; }
+
+    /// <summary>The video codec of whatever <c>/f/{slug}</c> actually hands a browser - the produced
+    /// <see cref="WebFileName"/>, or the original when there is none. This is the invariant the pipeline
+    /// defends ("the default lane is always H.264"), and it is what the startup heal tests, so a healed
+    /// item stops matching and the heal self-terminates. Null until the item has been processed.</summary>
+    public string? WebCodec { get; set; }
+
+    /// <summary>Optional better-but-pickier rendition, offered to browsers ahead of <see cref="WebFileName"/>
+    /// and skipped by any that can't decode it: the source H.265, kept whole (HDR intact) instead of being
+    /// flattened into the H.264 copy. May point at the original blob when that is already a faststart hvc1
+    /// mp4, in which case no second file is written. Null when there is nothing better to offer.</summary>
+    public string? HqFileName { get; set; }
+
+    /// <summary>The exact RFC 6381 codecs parameter for <see cref="HqFileName"/> (e.g. <c>hvc1.2.4.L120.B0</c>),
+    /// probed from the file we actually serve. It is what lets a browser SKIP that source instead of
+    /// selecting it and dying, so it is only ever set when we can state it honestly.</summary>
+    public string? HqCodecs { get; set; }
 
     /// <summary>Content-addressed poster/thumbnail (jpg) extracted for the player and OG image.</summary>
     public string? PosterFileName { get; set; }
@@ -145,12 +192,11 @@ public class MediaItem : AuditableEntity
     public bool AllowDownload { get; set; }
 
     /// <summary>
-    /// When true, the processing worker skips transcoding this video: the source codec is kept and
-    /// only remuxed into a faststart mp4 for streaming. Set at upload time as an opt-out of
-    /// normalization for codecs the uploader knows their audience can play (e.g. VP9/AV1). The
-    /// uploader owns compatibility. Off by default (everything normalizes to a universal file).
+    /// What the worker does with this video: see <see cref="ConversionProfile"/>. Chosen at upload time
+    /// (falling back to the box's default, then the instance default) because the worker needs it before
+    /// it runs. Meaningless for non-video items, which are always stored exactly as they came in.
     /// </summary>
-    public bool KeepOriginal { get; set; }
+    public ConversionProfile Profile { get; set; } = ConversionProfile.Best;
 
     /// <summary>
     /// Anonymous uploader identity (the <c>boxy_uid</c> cookie value). Lets a visitor delete
@@ -173,6 +219,10 @@ public class MediaItemConfiguration : AuditEntityConfiguration<MediaItem>
             // A download cap only means something when downloading the original is actually offered.
             t.HasCheckConstraint("CK_MediaItem_MaxDownloadsNeedsAllow",
                 "\"MaxDownloads\" IS NULL OR \"AllowDownload\" = 1");
+            // A codecs string with no file behind it would be advertised to browsers as a source that
+            // doesn't exist. The pair is written together or not at all.
+            t.HasCheckConstraint("CK_MediaItem_HqCodecsNeedsFile",
+                "\"HqCodecs\" IS NULL OR \"HqFileName\" IS NOT NULL");
         });
         builder.HasKey(e => e.Id);
 
@@ -196,6 +246,7 @@ public class MediaItemConfiguration : AuditEntityConfiguration<MediaItem>
         builder.Property(e => e.Description).HasColumnType("text");
         builder.Property(e => e.ContentHash).IsRequired();
         builder.Property(e => e.Status).HasConversion<string>();
+        builder.Property(e => e.Profile).HasConversion<string>();
 
         // Stored as its name (like Status), for a readable DB and a stable filter predicate. No dedicated
         // index: every list query is already owner-/bucket-scoped to a small set that SQLite filters in

@@ -522,6 +522,14 @@
         }
     }
 
+    // The chosen video conversion, if the page offers the choice. Read here, at finalize, rather than when
+    // the file was picked: the upload starts the moment a file lands, so the value is still the uploader's
+    // to change while a multi-GB clip is on its way up. Absent means "whatever the server defaults to".
+    function profileQuery() {
+        var el = form.querySelector('select[name=profile], input[name=profile]:checked');
+        return el && el.value ? '&profile=' + encodeURIComponent(el.value) : '';
+    }
+
     // Ask the server to assemble the staged parts into the finished file.
     //
     // Concatenating and hashing a multi-GB file takes minutes, which is longer than a reverse proxy will
@@ -529,9 +537,8 @@
     // From here that means: ask, then poll until it says done. Asking is idempotent - the server replays a
     // finished result - so a lost answer just gets asked for again rather than re-uploading anything.
     function complete(job) {
-        var keep = form.querySelector('input[name=keepOriginal]:checked') ? '&keepOriginal=true' : '';
         var askUrl = completeUrl + '?uploadId=' + job.uploadId + '&total=' + job.total +
-            '&name=' + encodeURIComponent(job.file.name) + layoutQuery(job) + keep;
+            '&name=' + encodeURIComponent(job.file.name) + layoutQuery(job) + profileQuery();
         var pollUrl = completeUrl + '/status?uploadId=' + job.uploadId;
 
         return ask(0);

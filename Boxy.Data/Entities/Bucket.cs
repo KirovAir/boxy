@@ -39,6 +39,12 @@ public class Bucket : AuditableEntity
 
     public DateTime? EmailNotifiedAt { get; set; }
 
+    /// <summary>What happens to videos dropped into this box, when the sender doesn't say. Null falls
+    /// through to the instance default. The public drop-off form deliberately doesn't offer the choice -
+    /// an anonymous sender has no idea who will watch, and a drop-off is only ever seen by the box
+    /// owner - so this is where the owner makes it once.</summary>
+    public ConversionProfile? DefaultProfile { get; set; }
+
     /// <summary>The account that owns this box.</summary>
     public int OwnerId { get; set; }
 
@@ -57,6 +63,7 @@ public class BucketConfiguration : AuditEntityConfiguration<Bucket>
         builder.Property(e => e.Slug).IsRequired().UseCollation("NOCASE");
         builder.HasIndex(e => e.Slug).IsUnique();
         builder.Property(e => e.Name).IsRequired();
+        builder.Property(e => e.DefaultProfile).HasConversion<string>();
         builder.HasIndex(e => e.ExpiresAt);
 
         builder.HasOne(e => e.Owner)

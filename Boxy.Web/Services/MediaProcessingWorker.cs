@@ -192,7 +192,7 @@ public class MediaProcessingWorker(
         // "Keep original" upload: skip normalization. Serve an already-faststart mp4 as-is, else
         // stream-copy the source into a faststart mp4 (codec untouched); if even that fails, serve the
         // raw original. Never transcode - the uploader opted to own compatibility.
-        if (item.KeepOriginal)
+        if (item.Profile == ConversionProfile.AsUploaded)
         {
             var keptName = item.ContentHash + "-web.mp4";
             if (!IsProgressiveMp4(item.Extension, originalPath)
