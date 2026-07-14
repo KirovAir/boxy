@@ -355,6 +355,13 @@ public class DashboardController(
         {
             return BadRequest(new { error = $"That file is over the {MbLabel(ex.MaxBytes)} upload limit." });
         }
+        catch (StorageFullException)
+        {
+            return new ObjectResult(new { error = "The server is out of storage space." })
+            {
+                StatusCode = StatusCodes.Status507InsufficientStorage
+            };
+        }
         catch (ArgumentException)
         {
             return BadRequest();
@@ -418,6 +425,10 @@ public class DashboardController(
         catch (QuotaExceededException)
         {
             return UploadOutcome.Failed("You're out of storage space. Delete something or ask an admin to raise your quota.");
+        }
+        catch (StorageFullException)
+        {
+            return UploadOutcome.Failed("The server is out of storage space.");
         }
         catch (UploadIncompleteException ex)
         {

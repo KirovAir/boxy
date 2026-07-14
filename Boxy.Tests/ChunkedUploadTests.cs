@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Boxy.Data;
 using Boxy.Data.Entities;
+using Boxy.Web.Models;
 using Boxy.Web.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
@@ -24,6 +25,7 @@ public class ChunkedUploadTests
 
     private string _root = null!;
     private SqliteConnection _conn = null!;
+    private TestDbFactory _dbFactory = null!;
     private FileSystemBlobStore _storage = null!;
     private ChunkedUploadService _chunked = null!;
 
@@ -43,15 +45,22 @@ public class ChunkedUploadTests
             db.SaveChanges();
         }
 
-        var factory = new TestDbFactory(options);
+        _dbFactory = new TestDbFactory(options);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["StoragePath"] = _root })
             .Build();
 
         _storage = new FileSystemBlobStore(config, new TestEnv(_root), NullLogger<FileSystemBlobStore>.Instance);
-        var ingestion = new IngestionService(factory, _storage, new MediaProcessingQueue(),
-            new QuotaService(factory), NullLogger<IngestionService>.Instance);
-        _chunked = new ChunkedUploadService(_storage, ingestion, NullLogger<ChunkedUploadService>.Instance);
+        // No free-space reserve by default: the guard has its own test, and how full the temp volume happens
+        // to be isn't something the rest of these should depend on.
+        _chunked = NewChunked(new StorageSettings { MinFreeDiskMb = 0 });
+    }
+
+    private ChunkedUploadService NewChunked(StorageSettings settings)
+    {
+        var ingestion = new IngestionService(_dbFactory, _storage, new MediaProcessingQueue(),
+            new QuotaService(_dbFactory), NullLogger<IngestionService>.Instance);
+        return new ChunkedUploadService(_storage, ingestion, settings, NullLogger<ChunkedUploadService>.Instance);
     }
 
     [TestCleanup]
@@ -233,6 +242,20 @@ public class ChunkedUploadTests
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => WriteChunk(id, 3, payload)));
 
         CollectionAssert.AreEqual(payload, await File.ReadAllBytesAsync(Path.Combine(_storage.ScratchDir, id, "3")));
+    }
+
+    [TestMethod]
+    public async Task WriteChunkAsync_RefusesToStage_WhenTheVolumeIsNearlyFull()
+    {
+        // Staged chunks have no other bound: a drop-off box is open to anyone with the link, and the per-file
+        // cap neither applies to an admin's box nor spans more than one upload id. Only the free-space floor
+        // stops a visitor filling the disk, which would take down far more than their own upload.
+        var greedy = NewChunked(new StorageSettings { MinFreeDiskMb = int.MaxValue }); // more than any disk has
+
+        await Assert.ThrowsExactlyAsync<StorageFullException>(() =>
+            greedy.WriteChunkAsync(NewUploadId(), 0, new MemoryStream(new byte[10])));
+
+        AssertScratchIsEmpty();
     }
 
     [TestMethod]

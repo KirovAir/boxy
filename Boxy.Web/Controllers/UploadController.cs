@@ -115,10 +115,22 @@ public class UploadController(
         {
             return BadRequest(new { error = $"That file is over the {ex.MaxBytes / 1024 / 1024} MB limit for this box." });
         }
+        catch (StorageFullException)
+        {
+            return StorageFull();
+        }
         catch (ArgumentException)
         {
             return BadRequest();
         }
+    }
+
+    private ObjectResult StorageFull()
+    {
+        return new ObjectResult(new { error = "This server is out of storage space. Try again later." })
+        {
+            StatusCode = StatusCodes.Status507InsufficientStorage
+        };
     }
 
     // Which chunk indices are already stored - lets the client resume an interrupted upload by
@@ -191,6 +203,10 @@ public class UploadController(
         catch (QuotaExceededException)
         {
             return UploadOutcome.Failed("This box is full - the owner is out of storage space.");
+        }
+        catch (StorageFullException)
+        {
+            return UploadOutcome.Failed("This server is out of storage space. Try again later.");
         }
         catch (UploadIncompleteException ex)
         {

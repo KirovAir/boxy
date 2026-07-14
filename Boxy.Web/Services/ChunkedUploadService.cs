@@ -1,12 +1,20 @@
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Boxy.Data.Entities;
+using Boxy.Web.Models;
 
 namespace Boxy.Web.Services;
 
 /// <summary>Thrown when the staged parts don't add up to the file the client says it sent (a missing part,
 /// or one whose length doesn't match its slot). The parts are discarded, so the client must start over.</summary>
 public class UploadIncompleteException(string reason) : Exception(reason);
+
+/// <summary>Thrown when taking an upload any further would eat into the free space the server keeps in
+/// reserve. Carries the room that's left, for the log.</summary>
+public class StorageFullException(long freeBytes) : Exception($"Only {freeBytes} bytes free on the working volume")
+{
+    public long FreeBytes { get; } = freeBytes;
+}
 
 /// <summary>
 /// Reliable, parallel large-file uploads. The client splits a file into fixed-size chunks and
@@ -24,6 +32,7 @@ public class UploadIncompleteException(string reason) : Exception(reason);
 public partial class ChunkedUploadService(
     IBlobStore storage,
     IngestionService ingestion,
+    StorageSettings settings,
     ILogger<ChunkedUploadService> logger)
 {
     // 1 MB copy buffer: the default 80 KB makes a needless number of syscalls over a multi-GB file.
@@ -31,6 +40,40 @@ public partial class ChunkedUploadService(
 
     [GeneratedRegex("^[a-zA-Z0-9]{8,64}$")]
     private static partial Regex UploadIdPattern();
+
+    /// <summary>
+    /// Refuse to write <paramref name="wanted"/> more bytes when doing so would eat into the reserve the
+    /// server keeps free. A full disk takes down far more than the upload that filled it, and staged chunks
+    /// are otherwise unbounded: the per-file cap doesn't apply to an admin's box, and where it does apply it
+    /// only ever bounds a single upload id, so a visitor with the link to an open box can just keep starting
+    /// new ones.
+    /// </summary>
+    private void EnsureRoomOnDisk(long wanted)
+    {
+        var reserve = settings.MinFreeDiskBytes;
+        if (reserve <= 0)
+        {
+            return;
+        }
+
+        long free;
+        try
+        {
+            free = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(storage.ScratchDir))!).AvailableFreeSpace;
+        }
+        catch (Exception ex)
+        {
+            // Can't tell (an odd mount, a platform that won't say). Don't invent a reason to reject uploads.
+            logger.LogDebug(ex, "Could not read free space for the scratch volume");
+            return;
+        }
+
+        if (free - wanted < reserve)
+        {
+            logger.LogWarning("Refusing {Wanted} bytes: {Free} free, {Reserve} reserved", wanted, free, reserve);
+            throw new StorageFullException(free);
+        }
+    }
 
     /// <summary>The exact byte length part <paramref name="index"/> must have for a file of
     /// <paramref name="size"/> bytes cut into <paramref name="chunkSize"/> pieces, or -1 when the index
@@ -59,6 +102,7 @@ public partial class ChunkedUploadService(
         }
 
         var dir = PartDir(uploadId);
+        EnsureRoomOnDisk(chunk.CanSeek ? chunk.Length : 0);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, index.ToString());
         var tmp = Path.Combine(dir, $"{index}.{Guid.NewGuid():N}.part");
@@ -172,6 +216,10 @@ public partial class ChunkedUploadService(
         {
             throw new UploadIncompleteException($"Upload {uploadId} declared an impossible layout ({layout})");
         }
+
+        // Assembling writes the whole file out again alongside its parts. Find out now that there isn't room
+        // for it, rather than half way through and with the volume full.
+        EnsureRoomOnDisk(layout.Size);
 
         var combined = dir + ".combined";
         try

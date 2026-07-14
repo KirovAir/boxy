@@ -92,6 +92,7 @@ await builder.RunWithLoggingAsync(async b =>
     b.Services.AddSingleton<ShareUnlock>();
     // Blob storage: provider-selected backend for finished content. Working files always stay local.
     var storageSettings = b.Configuration.GetSection(StorageSettings.SectionName).Get<StorageSettings>() ?? new StorageSettings();
+    b.Services.AddSingleton(storageSettings);
     switch (storageSettings.Provider.Trim().ToLowerInvariant())
     {
         case "s3":

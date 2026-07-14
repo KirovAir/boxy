@@ -421,9 +421,10 @@
 
     // A 4xx is the server's considered answer (too big, box full, bad request) - re-sending the same bytes
     // will get the same answer, so don't burn retries on it. Everything else (5xx, a proxy hiccup, a dropped
-    // connection) is worth another go. 408/429 are explicit "try again" codes.
+    // connection) is worth another go. 408/429 are explicit "try again" codes; 507 is "the disk is full",
+    // which hammering will not help.
     function isPermanent(status) {
-        return status >= 400 && status < 500 && status !== 408 && status !== 429;
+        return status === 507 || (status >= 400 && status < 500 && status !== 408 && status !== 429);
     }
 
     // Exponential backoff with jitter, so six parallel chunks don't all retry on the same beat and

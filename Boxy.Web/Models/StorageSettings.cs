@@ -12,6 +12,19 @@ public class StorageSettings
     public string Provider { get; set; } = "filesystem";
     public S3Settings S3 { get; set; } = new();
     public AzureBlobSettings Azure { get; set; } = new();
+
+    /// <summary>
+    /// How much room to leave free on the working volume, in MB. An upload that would eat into it is turned
+    /// away rather than allowed to fill the disk, because a full disk doesn't just break that one upload -
+    /// it breaks the database, the transcodes, and every other upload in flight.
+    ///
+    /// This is the only backstop on staged chunks. A drop-off box is open to anyone with the link, the
+    /// per-file size cap doesn't apply to an admin's box, and even where it does it only bounds one upload
+    /// id at a time - so nothing else stops a visitor staging chunks until the disk gives out.
+    /// </summary>
+    public int MinFreeDiskMb { get; set; } = 2048;
+
+    public long MinFreeDiskBytes => MinFreeDiskMb <= 0 ? 0 : (long)MinFreeDiskMb * 1024 * 1024;
 }
 
 public class S3Settings
