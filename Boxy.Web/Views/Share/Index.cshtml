@@ -58,10 +58,38 @@
         var fit = Model.Width is int vw && Model.Height is int vh && vw > 0 && vh > 0
             ? $"width:min(96vw, 1600px, calc(85vh * {vw} / {vh}));aspect-ratio:{vw} / {vh}"
             : "width:min(96vw, 1600px);max-height:85vh";
-        <video class="share-video" controls playsinline preload="metadata" poster="@Model.PosterUrl" style="@fit">
-            <source src="@Model.FileUrl" type="@Model.ContentType"/>
+        @* Best source first. A browser takes the first one it can actually decode and skips the rest, so
+           the H.265 rendition (which names itself precisely) is offered ahead of the H.264 one (which
+           deliberately does not). See VideoSource. *@
+        <video class="share-video" controls playsinline preload="metadata" poster="@Model.PosterUrl" style="@fit"
+               data-fallback="@Model.FileUrl">
+            @foreach (var source in Model.Sources)
+            {
+                <source src="@source.Url" type="@source.Type"/>
+            }
             Your browser can’t play this video.
         </video>
+        <div id="noCodec" class="share-file d-none">
+            <div class="share-file__icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <path d="M14 2v6h6"/>
+                </svg>
+            </div>
+            <div class="share-file__name">Your browser can’t play this video’s format.</div>
+            @if (Model.CanDownload)
+            {
+                <div class="share-file__meta">Download it and open it in a player like VLC.</div>
+                <a href="@Model.DownloadUrl" class="btn btn-primary">Download</a>
+            }
+            else
+            {
+                <div class="share-file__meta">Downloads are turned off for this share, so ask whoever sent it
+                    for the file.
+                </div>
+            }
+        </div>
     }
     <div class="share-body">
         @if (Model.Kind == MediaKind.Image)
@@ -140,21 +168,39 @@
 <partial name="_Footer"/>
 <script>
     (function () {
-        // iOS gives up for good when a range request dies mid-stream (a scrub burst tripping the
-        // proxy, a Wi-Fi/cellular hand-off): the element lands in a fatal error or an endless stall
-        // and the native controls never retry. Desktop browsers reconnect on their own. So remember
-        // the position, reload the source, seek back and resume - capped, so a genuinely dead link
-        // still surfaces the browser's error UI instead of looping.
+        // Two different failures, which must not be treated the same way.
+        //
+        // A DEAD CONNECTION. iOS gives up for good when a range request dies mid-stream (a scrub burst
+        // tripping the proxy, a Wi-Fi/cellular hand-off): the element lands in a fatal error or an endless
+        // stall and the native controls never retry. Desktop browsers reconnect on their own. So remember
+        // the position, reload, seek back and resume - capped, so a genuinely dead link still surfaces the
+        // browser's error UI instead of looping.
+        //
+        // A MISSING DECODER. The player is offered the H.265 rendition first and the H.264 one behind it,
+        // and a browser that knows it can't decode H.265 skips that source by itself - no JS needed. But a
+        // browser that ACCEPTS the source and then fails to decode it is a dead end: per the HTML spec,
+        // once decoding has begun a decode error aborts resource selection outright, so it will NOT fall
+        // through to the next <source> on its own. Nobody rescues that but us.
+        //
+        // Reloading an undecodable file, which is what this used to do to every error, fixes neither.
         var media = document.querySelector('video.share-video, .share-file audio');
         if (!media) return;
 
+        var fallback = media.getAttribute('data-fallback');
+        var swapped = false;
+        var everPlayed = false;
         var attempts = 0;
         var lastTime = 0;
         var stuckMs = 0;
 
-        function recover() {
-            if (attempts >= 3) return;
-            attempts++;
+        // Whether a single frame has ever made it to the screen. This is what tells the two failures
+        // apart: a decoder that has been running cannot suddenly be missing.
+        media.addEventListener('timeupdate', function () {
+            if (media.currentTime > 0) everPlayed = true;
+        });
+
+        // Reload whatever the element is pointing at, keeping the viewer's place.
+        function reload() {
             var at = media.currentTime;
             var resume = !media.paused && !media.ended;
             media.load();
@@ -168,12 +214,51 @@
             });
         }
 
-        media.addEventListener('error', recover);
-        var source = media.querySelector('source');
-        if (source) source.addEventListener('error', function () {
-            // A source error before anything ever played means the format is unsupported: let the
-            // fallback text show. After playback started it means the connection died: recover.
-            if (media.currentTime > 0) recover();
+        function recover() {
+            if (attempts >= 3) return;
+            attempts++;
+            reload();
+        }
+
+        // Drop to the source that always plays. Setting src wins over the <source> children, so this
+        // pins the element to the H.264 file and there is nothing left to fall through to.
+        function useFallback() {
+            swapped = true;
+            media.src = fallback;
+            reload();
+        }
+
+        function showNoCodec() {
+            var panel = document.getElementById('noCodec');
+            if (!panel) return;
+            media.classList.add('d-none');
+            panel.classList.remove('d-none');
+        }
+
+        media.addEventListener('error', function () {
+            var code = media.error ? media.error.code : 0;
+
+            // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED: no source could be used at all. Always a codec problem.
+            // 3 = MEDIA_ERR_DECODE, but ONLY when nothing ever played. The same code is also raised by a
+            // corrupt range read part-way through a stream that had been decoding perfectly well - the iOS
+            // scrub-death case - and a decoder that has been running is plainly not a decoder that is
+            // missing. Treating that as "no codec" would hide the player on a video the viewer was
+            // watching, so it goes to the reload path with every other mid-stream failure.
+            var missingCodec = code === 4 || (code === 3 && !everPlayed);
+            if (missingCodec) {
+                if (fallback && !swapped && media.currentSrc !== fallback) {
+                    useFallback();
+                } else {
+                    // Already on the file that plays everywhere and it still won't decode: a "don't convert
+                    // it" upload in a codec this browser doesn't have. Say so, rather than leaving a black
+                    // rectangle with no explanation.
+                    showNoCodec();
+                }
+
+                return;
+            }
+
+            recover();
         });
 
         // The silent failure mode: no error event, the pipeline just stops making progress. If the
