@@ -85,18 +85,38 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
         var baseUrl = config.PublicBaseUrl(Request);
         var kind = MediaKinds.Of(item.Extension, item.VideoCodec is not null, item.WebFileName is not null);
         // A video is advertised as video/mp4 only when that's what we actually serve: a produced
-        // -web.mp4, or an mp4-family original served as-is. A "keep original" video with no web file is
+        // rendition, or an mp4-family original served as-is. A "don't convert it" video with no web file is
         // served raw in its own container, so it keeps its real MIME (as does every non-video kind).
         var servedAsMp4 = item.WebFileName is not null || item.Extension is ".mp4" or ".m4v" or ".mov";
         var contentType = kind == MediaKind.Video && servedAsMp4 ? "video/mp4" : item.ContentType;
         var capReached = !isOwner && item.MaxDownloads is int md && item.DownloadCount >= md;
 
+        // Both URLs carry a ?v= token derived from the blob they serve, so each is safe to cache forever
+        // and a re-converted video is picked up the moment it changes.
+        var fileUrl = $"{baseUrl}/f/{item.Slug}?v={item.WebVersion()}";
+
+        // Best first. The H.265 rendition names itself exactly so a browser without the decoder can skip
+        // it; the H.264 one names itself vaguely on purpose, because it is the source that must never be
+        // skipped. See VideoSource.
+        var sources = new List<VideoSource>();
+        if (kind == MediaKind.Video && item is { HqFileName: not null, HqCodecs: not null })
+        {
+            sources.Add(new VideoSource($"{baseUrl}/f/{item.Slug}?r=hq&v={item.HqVersion()}",
+                $"video/mp4; codecs=\"{item.HqCodecs}\""));
+        }
+
+        if (kind == MediaKind.Video)
+        {
+            sources.Add(new VideoSource(fileUrl, contentType));
+        }
+
         var model = new ShareViewModel
         {
+            Sources = sources,
             Title = item.Title,
             Description = item.Description,
             PageUrl = ShareUrls.Url(baseUrl, item, owner),
-            FileUrl = $"{baseUrl}/f/{item.Slug}",
+            FileUrl = fileUrl,
             DownloadUrl = $"{baseUrl}/f/{item.Slug}?download=1",
             PosterUrl = item.PosterFileName is not null ? $"{baseUrl}/poster/{item.Slug}?v={item.PosterVersion()}" : null,
             // Link-preview image: the poster if we have one, else the image itself, else a branded card

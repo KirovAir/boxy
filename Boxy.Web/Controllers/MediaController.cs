@@ -20,8 +20,14 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         return item.SharePasswordHash is not null && !CanManage(item) && !unlock.IsUnlocked(Request, item);
     }
 
+    /// <summary>
+    /// The bytes. <paramref name="r"/> picks a rendition: <c>hq</c> is the kept H.265 file, which the share
+    /// page offers ahead of the default one and only to browsers that say they can decode it. Anything else
+    /// (including a stale page asking for a rendition this item no longer has) gets the default lane, which
+    /// is always H.264 and always plays.
+    /// </summary>
     [HttpGet("/f/{slug}")]
-    public async Task<IActionResult> Stream(string slug, [FromQuery] int download = 0)
+    public async Task<IActionResult> Stream(string slug, [FromQuery] int download = 0, [FromQuery] string? r = null)
     {
         var item = await LoadVisibleAsync(slug);
         if (item is null || PasswordLocked(item))
@@ -66,11 +72,18 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         // them into something executable.
         Response.Headers.XContentTypeOptions = "nosniff";
 
+        // The H.265 rendition, when this item has one and the browser asked for it by name. It is always an
+        // mp4 (that is what makes it a rendition), and it may BE the original blob - an upload that already
+        // streams and is already hvc1-tagged needs no second file.
+        var hq = r == "hq" && item.HqFileName is not null;
+
         // download=1 forces the ORIGINAL (hi-res) file as an attachment with its real name. Otherwise
-        // preview inline: the web-safe transcode for video, the original for everything else. mp4-family
+        // preview inline: the produced rendition for video, the original for everything else. mp4-family
         // (incl. .mov) is advertised as video/mp4 - desktop Chrome/Firefox reject video/quicktime.
-        var wantOriginal = download != 0 || item.WebFileName is null;
-        var fileName = wantOriginal ? item.ContentHash + item.Extension : item.WebFileName!;
+        var wantOriginal = download != 0 || (!hq && item.WebFileName is null);
+        var fileName = download != 0 ? item.ContentHash + item.Extension
+            : hq ? item.HqFileName!
+            : item.WebFileName ?? item.ContentHash + item.Extension;
         var contentType = wantOriginal ? ServedContentType(item) : "video/mp4";
 
         var serve = await storage.GetServeAsync(fileName, HttpContext.RequestAborted);
@@ -86,11 +99,16 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
             return BlobServing.Serve(serve, "application/octet-stream", name, true);
         }
 
-        // The content-addressed -web.mp4 is truly immutable, so it can be cached hard. The original,
-        // by contrast, may still be swapped for a -web.mp4 later (a legacy .mov heal keeps Status=Ready
-        // while it produces one), so it must be revalidated - the ETag makes that a cheap 304.
-        Response.Headers.CacheControl = item.WebFileName is not null && !wantOriginal
-            ? "private, max-age=604800, immutable"
+        // A ?v= token pins this URL to one specific blob, so those bytes can be cached hard - exactly like
+        // /poster/{slug} does. A bare hit revalidates instead, because the bytes behind the bare URL CAN
+        // change under you: a heal swaps the original for a produced rendition while the item stays Ready.
+        //
+        // The old rule promised immutable for a week on the strength of WebFileName alone, which is what
+        // left a viewer holding an undecodable H.265 file that their browser would not re-request for
+        // seven days. Cache-busting a fixed video is the whole reason the token exists, so it is what the
+        // promise is now made against.
+        Response.Headers.CacheControl = Request.Query.ContainsKey("v")
+            ? "private, max-age=31536000, immutable"
             : "private, no-cache";
 
         // SVG can contain script and executes when opened top-level. It still renders fine inside the

@@ -90,7 +90,7 @@ public class RetentionSweepService(
 
         foreach (var m in shares.Concat(drops))
         {
-            await DeleteFilesIfUnreferencedAsync(db, m, ct);
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, m, ct);
         }
 
         logger.LogInformation(
@@ -177,26 +177,6 @@ public class RetentionSweepService(
     {
         var at = email.IndexOf('@');
         return at > 0 && email.IndexOf('.', at) > at + 1 && !email.EndsWith('.');
-    }
-
-    /// <summary>Delete a removed item's physical files when no surviving item still points at them.
-    /// The content file is keyed by hash+extension; the poster and web file by their stored names.</summary>
-    private async Task DeleteFilesIfUnreferencedAsync(AppDbContext db, MediaItem m, CancellationToken ct)
-    {
-        if (!await db.MediaItems.AnyAsync(x => x.ContentHash == m.ContentHash && x.Extension == m.Extension, ct))
-        {
-            await storage.DeleteAsync(m.ContentHash + m.Extension, ct);
-        }
-
-        if (m.PosterFileName is not null && !await db.MediaItems.AnyAsync(x => x.PosterFileName == m.PosterFileName, ct))
-        {
-            await storage.DeleteAsync(m.PosterFileName, ct);
-        }
-
-        if (m.WebFileName is not null && !await db.MediaItems.AnyAsync(x => x.WebFileName == m.WebFileName, ct))
-        {
-            await storage.DeleteAsync(m.WebFileName, ct);
-        }
     }
 
     private static async Task<bool> SafeWaitAsync(PeriodicTimer timer, CancellationToken ct)

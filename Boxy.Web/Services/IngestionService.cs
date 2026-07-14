@@ -115,7 +115,8 @@ public class IngestionService(
             return null;
         }
 
-        var (oldHash, oldExt, oldPoster, oldWeb) = (item.ContentHash, item.Extension, item.PosterFileName, item.WebFileName);
+        var (oldHash, oldExt, oldPoster, oldWeb, oldHq) =
+            (item.ContentHash, item.Extension, item.PosterFileName, item.WebFileName, item.HqFileName);
 
         // Only the growth over the current bytes counts against the quota (the item already occupies its
         // old size). The check and the save share the per-user lock so concurrent uploads can't both pass.
@@ -134,7 +135,7 @@ public class IngestionService(
             item.DurationSeconds = null;
             item.VideoCodec = item.AudioCodec = null;
             item.CapturedAt = null;
-            item.WebFileName = null;
+            item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
             item.PosterFileName = null;
             item.Status = MediaStatus.Uploaded;
             item.ErrorMessage = null;
@@ -142,23 +143,10 @@ public class IngestionService(
             await db.SaveChangesAsync(ct);
         }
 
-        // Drop old artifacts only when nothing else references them. The content file's name is
-        // hash+extension, so the check must match both: re-uploading identical bytes under a different
-        // extension leaves this item on the same hash yet a new file, and the old one must still go.
-        if (!await db.MediaItems.AnyAsync(m => m.ContentHash == oldHash && m.Extension == oldExt, ct))
-        {
-            await storage.DeleteAsync(oldHash + oldExt, ct);
-        }
-
-        if (oldPoster is not null && !await db.MediaItems.AnyAsync(m => m.PosterFileName == oldPoster, ct))
-        {
-            await storage.DeleteAsync(oldPoster, ct);
-        }
-
-        if (oldWeb is not null && !await db.MediaItems.AnyAsync(m => m.WebFileName == oldWeb, ct))
-        {
-            await storage.DeleteAsync(oldWeb, ct);
-        }
+        // Drop what the item used to point at, now that it points somewhere else. The item itself is
+        // excluded from the "still referenced?" check by id: the row survives a replace, but its claim on
+        // these files did not.
+        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
 
         queue.Enqueue(item.Id);
         logger.LogInformation("Replaced item {Slug} with {File} (deduped-storage={Dedup})",

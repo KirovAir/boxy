@@ -584,7 +584,7 @@ public class DashboardController(
             await db.SaveChangesAsync(ct);
             foreach (var m in items)
             {
-                await DeleteMediaFilesIfUnreferencedAsync(db, m, ct);
+                await MediaBlobs.DeleteUnreferencedAsync(db, storage, m, ct);
             }
 
             this.FlashSuccess($"Deleted {items.Count} item{(items.Count == 1 ? "" : "s")}.");
@@ -1059,7 +1059,7 @@ public class DashboardController(
         var bucketId = item.BucketId;
         db.MediaItems.Remove(item);
         await db.SaveChangesAsync(ct);
-        await DeleteMediaFilesIfUnreferencedAsync(db, item, ct);
+        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item, ct);
 
         // A drop-off is managed on its box page; a share on the dashboard. Return to whichever it was.
         if (bucketId is int bid)
@@ -1070,26 +1070,6 @@ public class DashboardController(
 
         this.FlashSuccess("Share deleted.");
         return RedirectToAction(nameof(Index));
-    }
-
-    // Drop an item's physical files once its row is gone and nothing else references them (dedup-safe).
-    // The content file is keyed by hash+extension; the poster and web file by their own stored names.
-    private async Task DeleteMediaFilesIfUnreferencedAsync(AppDbContext db, MediaItem m, CancellationToken ct)
-    {
-        if (!await db.MediaItems.AnyAsync(x => x.ContentHash == m.ContentHash && x.Extension == m.Extension, ct))
-        {
-            await storage.DeleteAsync(m.ContentHash + m.Extension, ct);
-        }
-
-        if (m.PosterFileName is not null && !await db.MediaItems.AnyAsync(x => x.PosterFileName == m.PosterFileName, ct))
-        {
-            await storage.DeleteAsync(m.PosterFileName, ct);
-        }
-
-        if (m.WebFileName is not null && !await db.MediaItems.AnyAsync(x => x.WebFileName == m.WebFileName, ct))
-        {
-            await storage.DeleteAsync(m.WebFileName, ct);
-        }
     }
 
     private static async Task<string> NewBucketSlugAsync(AppDbContext db)

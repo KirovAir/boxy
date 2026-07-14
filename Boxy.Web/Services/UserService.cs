@@ -221,7 +221,7 @@ public class UserService(IDbContextFactory<AppDbContext> dbFactory, IBlobStore s
         // cascade, so their blobs can't be recovered afterwards.
         var ownedFiles = await db.MediaItems
             .Where(m => m.OwnerId == id)
-            .Select(m => new { m.ContentHash, m.Extension, m.PosterFileName, m.WebFileName })
+            .Select(m => new { m.Id, m.ContentHash, m.Extension, m.PosterFileName, m.WebFileName, m.HqFileName })
             .ToListAsync(ct);
 
         // Delete the account as one atomic statement, only if it isn't the last active admin - so
@@ -241,20 +241,8 @@ public class UserService(IDbContextFactory<AppDbContext> dbFactory, IBlobStore s
         // Now the rows are gone, drop any file no surviving item still points at (dedup-safe).
         foreach (var f in ownedFiles)
         {
-            if (!await db.MediaItems.AnyAsync(m => m.ContentHash == f.ContentHash, ct))
-            {
-                await storage.DeleteAsync(f.ContentHash + f.Extension, ct);
-            }
-
-            if (f.PosterFileName is not null && !await db.MediaItems.AnyAsync(m => m.PosterFileName == f.PosterFileName, ct))
-            {
-                await storage.DeleteAsync(f.PosterFileName, ct);
-            }
-
-            if (f.WebFileName is not null && !await db.MediaItems.AnyAsync(m => m.WebFileName == f.WebFileName, ct))
-            {
-                await storage.DeleteAsync(f.WebFileName, ct);
-            }
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, f.Id, f.ContentHash, f.Extension,
+                f.PosterFileName, f.WebFileName, f.HqFileName, ct);
         }
 
         logger.LogInformation("Deleted account {UserId} and {MediaCount} media item(s)", id, ownedFiles.Count);

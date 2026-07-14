@@ -329,22 +329,7 @@ public class UploadController(
 
     private async Task DeleteItemAsync(AppDbContext db, MediaItem item)
     {
-        // Only remove physical files when no other item references the same content (dedup-safe).
-        var shared = await db.MediaItems.AnyAsync(m => m.ContentHash == item.ContentHash && m.Id != item.Id);
-        if (!shared)
-        {
-            await storage.DeleteAsync(item.ContentHash + item.Extension);
-            if (item.PosterFileName is not null)
-            {
-                await storage.DeleteAsync(item.PosterFileName);
-            }
-
-            if (item.WebFileName is not null)
-            {
-                await storage.DeleteAsync(item.WebFileName);
-            }
-        }
-
+        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item);
         db.MediaItems.Remove(item);
         await db.SaveChangesAsync();
     }
