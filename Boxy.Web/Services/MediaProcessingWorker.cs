@@ -20,8 +20,18 @@ public class MediaProcessingWorker(
     {
         await RequeueUnfinishedAsync(stoppingToken);
 
-        await foreach (var id in queue.ReadAllAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
+            int id;
+            try
+            {
+                id = await queue.ReadNextAsync(stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             try
             {
                 await ProcessAsync(id, stoppingToken);
@@ -65,9 +75,11 @@ public class MediaProcessingWorker(
             queue.Enqueue(id);
         }
 
+        // The heal goes in the slow lane: these items are already published and already serving
+        // something, so a library-sized backfill must never delay the next real upload.
         foreach (var id in heal)
         {
-            queue.Enqueue(id);
+            queue.EnqueueBackfill(id);
         }
 
         if (pending.Count > 0)
