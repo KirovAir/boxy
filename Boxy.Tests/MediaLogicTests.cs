@@ -1,3 +1,5 @@
+using Boxy.Data.Entities;
+using Boxy.Web;
 using Boxy.Web.Services;
 
 namespace Boxy.Tests;
@@ -20,25 +22,38 @@ public class MediaLogicTests
     }
 
     [TestMethod]
-    public void HevcMp4_IsWebPlayable()
+    public void HevcMp4_IsNotWebPlayable()
     {
-        // 8-bit HEVC in an mp4-family container is now accepted as-is (Apple + hardware-decode browsers).
-        Assert.IsTrue(MediaProcessor.IsWebPlayable(".mp4", "hevc", "aac", "yuv420p"));
-        Assert.IsTrue(MediaProcessor.IsWebPlayable(".mov", "hevc", null, "yuv420p"));
-    }
-
-    [TestMethod]
-    public void HevcMkv_IsNotWebPlayable_WrongContainer()
-    {
-        // HEVC is accepted, but .mkv isn't an mp4-family container, so it still needs a remux to mp4.
+        // The file we serve by default is never H.265, whatever container it arrives in. Playing it needs
+        // a hardware decoder, and on a share link we don't know the viewer - Firefox on Linux has none at
+        // all. H.265 is offered as an extra source instead (see HevcCodecs), never as the only one.
+        Assert.IsFalse(MediaProcessor.IsWebPlayable(".mp4", "hevc", "aac", "yuv420p"));
+        Assert.IsFalse(MediaProcessor.IsWebPlayable(".mov", "hevc", null, "yuv420p"));
         Assert.IsFalse(MediaProcessor.IsWebPlayable(".mkv", "hevc", "aac", "yuv420p"));
     }
 
     [TestMethod]
-    public void Hi10pHevcMp4_IsWebPlayable()
+    public void Hi10pHevcMp4_IsNotWebPlayable()
     {
-        // 10-bit HEVC (Main 10) decodes wherever HEVC does, so HDR footage is kept, not transcoded.
-        Assert.IsTrue(MediaProcessor.IsWebPlayable(".mp4", "hevc", "aac", "yuv420p10le"));
+        Assert.IsFalse(MediaProcessor.IsWebPlayable(".mp4", "hevc", "aac", "yuv420p10le"));
+    }
+
+    [TestMethod]
+    public void HevcIsKeptAsTheHqRendition()
+    {
+        // Demoted, not discarded: H.265 is still worth keeping whole for the devices that can decode it,
+        // at 8-bit and at 10-bit (so HDR phone footage survives instead of being flattened).
+        Assert.IsTrue(MediaProcessor.CanKeepAsHq("hevc", "aac", "yuv420p"));
+        Assert.IsTrue(MediaProcessor.CanKeepAsHq("hevc", null, "yuv420p10le"));
+
+        // Nothing else earns a second file. H.264 already IS the universal file, and a codec no browser
+        // decodes is not made better by being offered first.
+        Assert.IsFalse(MediaProcessor.CanKeepAsHq("h264", "aac", "yuv420p"));
+        Assert.IsFalse(MediaProcessor.CanKeepAsHq("vp9", "opus", "yuv420p"));
+        // 4:2:2 / 4:4:4 HEVC is not something browsers decode, so there is no point keeping it.
+        Assert.IsFalse(MediaProcessor.CanKeepAsHq("hevc", "aac", "yuv422p"));
+        // An audio codec an mp4 stream-copy can't carry rules out the lossless remux this depends on.
+        Assert.IsFalse(MediaProcessor.CanKeepAsHq("hevc", "ac3", "yuv420p"));
     }
 
     [TestMethod]
@@ -76,14 +91,72 @@ public class MediaLogicTests
     }
 
     [TestMethod]
-    public void CanStreamCopyToMp4_H264OrHevc_True()
+    public void CanStreamCopyToMp4_H264Only()
     {
+        // A clean 8-bit H.264 upload is still copied, never re-encoded: this is the path that keeps a
+        // perfectly good 4K H.264 file untouched, and nobody should "fix" the H.265 change by breaking it.
         Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("h264", "aac", "yuv420p"));
         Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("h264", "mp3", "yuvj420p"));
         Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("h264", null, "yuv420p"));
-        Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("hevc", "aac", "yuv420p"));
-        Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("hevc", null, "yuvj420p"));
-        Assert.IsTrue(MediaProcessor.CanStreamCopyToMp4("hevc", "aac", "yuv420p10le")); // 10-bit HEVC (HDR) kept
+
+        // H.265 is not: copying it into the file we serve is the bug this replaced.
+        Assert.IsFalse(MediaProcessor.CanStreamCopyToMp4("hevc", "aac", "yuv420p"));
+        Assert.IsFalse(MediaProcessor.CanStreamCopyToMp4("hevc", "aac", "yuv420p10le"));
+    }
+
+    [TestMethod]
+    public void HevcCodecs_DescribesOnlyWhatItCanStateHonestly()
+    {
+        // The string a browser uses to decide whether to even try. Main and Main 10, hvc1-tagged.
+        Assert.AreEqual("hvc1.1.6.L93.B0",
+            MediaProcessor.HevcCodecs(Probe("hevc", "yuv420p", "Main", 93, "hvc1")));
+        Assert.AreEqual("hvc1.2.4.L120.B0",
+            MediaProcessor.HevcCodecs(Probe("hevc", "yuv420p10le", "Main 10", 120, "hvc1")));
+
+        // hev1 is refused outright by Safari, so it is never advertised - the remux retags it to hvc1
+        // first, and this is probed from the file we actually serve.
+        Assert.IsNull(MediaProcessor.HevcCodecs(Probe("hevc", "yuv420p", "Main", 93, "hev1")));
+        // Anything we can't describe exactly is not offered at all: a source we can't name is a source a
+        // browser can't skip, and it would download it only to fail.
+        Assert.IsNull(MediaProcessor.HevcCodecs(Probe("hevc", "yuv422p", "Rext", 93, "hvc1")));
+        Assert.IsNull(MediaProcessor.HevcCodecs(Probe("hevc", "yuv420p", "Main", null, "hvc1")));
+        Assert.IsNull(MediaProcessor.HevcCodecs(Probe("h264", "yuv420p", "High", 41, "avc1")));
+    }
+
+    [TestMethod]
+    public void EveryLaneGetsItsOwnBlobName()
+    {
+        // Blob names are content-addressed, so two uploads of the same bytes under different profiles land
+        // on the same stem. If the lanes shared a suffix they would overwrite each other's output, and a
+        // "don't convert it" upload would silently serve someone else's H.264 transcode.
+        var names = ConversionProfiles.Choices.Select(ConversionProfiles.WebSuffix).ToList();
+        Assert.AreEqual(ConversionProfiles.WebSuffix(ConversionProfile.Best),
+            ConversionProfiles.WebSuffix(ConversionProfile.Universal),
+            "Best and Universal produce the same capped H.264 file, so they may share it.");
+        Assert.AreEqual(3, names.Distinct().Count());
+        CollectionAssert.DoesNotContain(names, ConversionProfiles.HqSuffix);
+    }
+
+    [TestMethod]
+    public void OnlyDerivedRenditionsAreDeletable()
+    {
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-h264.mp4"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-h264-full.mp4"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-asis.mp4"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.mp4"));
+
+        // The load-bearing case: HqFileName points at the ORIGINAL when the upload is already a faststart
+        // hvc1 mp4. Cleaning up a stale rendition must never treat that as its own file to delete - after a
+        // replace the item's hash has moved on, and another item may still share those bytes by dedup.
+        Assert.IsFalse(ConversionProfiles.IsDerivedRendition("abc123.mp4"));
+        Assert.IsFalse(ConversionProfiles.IsDerivedRendition("abc123.mov"));
+        Assert.IsFalse(ConversionProfiles.IsDerivedRendition("abc123.jpg"));
+        Assert.IsFalse(ConversionProfiles.IsDerivedRendition("abc123-thumb.jpg"));
+    }
+
+    private static ProbeResult Probe(string codec, string pixFmt, string? profile, int? level, string? tag)
+    {
+        return new ProbeResult(1920, 1080, 10, codec, "aac", pixFmt, 10, null, null, profile, level, tag);
     }
 
     [TestMethod]

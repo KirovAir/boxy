@@ -120,4 +120,28 @@ public static class ConversionProfiles
             _ => "-h264.mp4"
         };
     }
+
+    /// <summary>The suffix of the kept H.265 rendition. Not per-profile: only one profile makes one.</summary>
+    public const string HqSuffix = "-hevc.mp4";
+
+    private static readonly string[] RenditionSuffixes =
+        ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix];
+
+    /// <summary>
+    /// True when a blob name is something the worker DERIVED, rather than an uploaded original
+    /// (<c>{hash}{ext}</c>) or a poster (<c>{hash}.jpg</c> / <c>{hash}-thumb.jpg</c>).
+    ///
+    /// This is a safety rail on deletion, and it earns its keep because <c>HqFileName</c> can legitimately
+    /// point AT the original blob: when an upload is already a faststart hvc1 mp4 there is nothing to
+    /// produce, so the rendition IS the upload. A cleanup that treats every old rendition name as its own
+    /// to delete would then delete the original bytes - and after a replace, the item's hash no longer
+    /// matches them, so the obvious "is this my own original?" guard misses and another item that shares
+    /// those bytes by dedup loses its file.
+    ///
+    /// An original is only ever deleted along with the item that owns it, on the paths that check the hash.
+    /// </summary>
+    public static bool IsDerivedRendition(string name)
+    {
+        return RenditionSuffixes.Any(s => name.EndsWith(s, StringComparison.Ordinal));
+    }
 }

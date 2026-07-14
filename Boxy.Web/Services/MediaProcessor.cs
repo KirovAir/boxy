@@ -7,25 +7,38 @@ using Microsoft.Extensions.Options;
 namespace Boxy.Web.Services;
 
 /// <summary>
-/// Thin wrapper over ffprobe/ffmpeg: inspects a file, extracts a poster frame, and produces a
-/// browser-safe mp4 (H.264 always; HEVC/H.265 where hardware decoders are common) by lossless remux
-/// when the source codecs already allow it, otherwise a transcode to H.264. Every invocation is
-/// bounded by a timeout so one bad file can't wedge the processing queue.
+/// Thin wrapper over ffprobe/ffmpeg: inspects a file, extracts a poster frame, and produces the mp4 we
+/// serve - a lossless remux when the source codecs already allow it, otherwise a transcode to H.264.
+/// Every invocation is bounded by a timeout so one bad file can't wedge the processing queue.
 /// </summary>
 public class MediaProcessor(
     IOptions<FfmpegSettings> ffmpeg,
-    VideoSettingsProvider videoSettings,
     ILogger<MediaProcessor> logger)
 {
-    // H.264 in an mp4-family container plays natively on EVERY target browser/device. HEVC/H.265 is
-    // accepted too: it plays on all Apple devices and on Windows/macOS Chrome/Firefox/Edge with a
-    // hardware decoder (most modern hardware), so heavy HEVC sources (phone/camera footage) are
-    // stream-copied into mp4 rather than re-encoded. VP8/VP9/AV1 and .webm still transcode by default
-    // (they fail on Apple except the newest hardware). Copied at 4:2:0: 8-bit for H.264, 8- or 10-bit
-    // for HEVC (so HDR phone footage is preserved, not flattened); H.264 High 10 and 4:2:2/4:4:4 transcode.
+    // The file a browser gets by default is ALWAYS H.264 8-bit 4:2:0 in an mp4-family container, because
+    // that is the only combination with no asterisks next to it: every browser, every OS, no hardware
+    // decoder required. HEVC/H.265 used to be on this list, which was a bet that the viewer had a hardware
+    // decoder - and on a share link you don't know the viewer, so it isn't a bet you can make. Firefox on
+    // Linux has no HEVC decoder at all, and it got a black screen.
+    //
+    // H.265 is not gone, it is demoted: see HqVideoCodecs. It rides along as a SECOND <source> that a
+    // capable device takes first and everything else skips, which is the same win without the black screen.
     private static readonly string[] Mp4FamilyContainers = [".mp4", ".m4v", ".mov"];
     private static readonly string[] CopyableAudioCodecs = ["aac", "mp3"];
-    private static readonly string[] CopyableVideoCodecs = ["h264", "hevc"];
+    private static readonly string[] CopyableVideoCodecs = ["h264"];
+
+    // Codecs worth keeping whole as the pickier, better rendition: the source H.265, HDR and 10-bit
+    // intact, rather than flattened into the H.264 copy. Offered ahead of it and skipped by any browser
+    // without the decoder, so nothing is risked by offering it.
+    private static readonly string[] HqVideoCodecs = ["hevc"];
+
+    /// <summary>What the file behind <c>/f/{slug}</c> is allowed to be. The worker validates its output
+    /// against this, which is also what makes an H.265 file produced by an older build get rejected and
+    /// re-made instead of being silently reused.</summary>
+    public static IReadOnlyCollection<string> UniversalCodecs => CopyableVideoCodecs;
+
+    /// <summary>What the optional better rendition is allowed to be.</summary>
+    public static IReadOnlyCollection<string> HqCodecSet => HqVideoCodecs;
 
     // Binary paths and per-operation timeouts are deployment concerns: bound once at boot from the
     // "Ffmpeg" section, never editable in-app (an HTTP-writable executable path would be a remote-code-
@@ -67,8 +80,8 @@ public class MediaProcessor(
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        int? width = null, height = null, rotation = null;
-        string? videoCodec = null, audioCodec = null, pixFmt = null;
+        int? width = null, height = null, rotation = null, level = null;
+        string? videoCodec = null, audioCodec = null, pixFmt = null, videoProfile = null, codecTag = null;
         double? videoDuration = null;
 
         if (root.TryGetProperty("streams", out var streams))
@@ -91,6 +104,14 @@ public class MediaProcessor(
                     width = s.TryGetProperty("width", out var w) ? w.GetInt32() : null;
                     height = s.TryGetProperty("height", out var h) ? h.GetInt32() : null;
                     pixFmt = s.TryGetProperty("pix_fmt", out var pf) ? pf.GetString() : null;
+                    // Profile / level / container tag: the three things an RFC 6381 codecs parameter is
+                    // made of. Without them we can't tell a browser precisely what a source is, and a
+                    // source we can't describe precisely is one we don't offer at all.
+                    videoProfile = s.TryGetProperty("profile", out var pr) ? pr.GetString() : null;
+                    level = s.TryGetProperty("level", out var lv) && lv.ValueKind == JsonValueKind.Number
+                        ? lv.GetInt32()
+                        : null;
+                    codecTag = s.TryGetProperty("codec_tag_string", out var tg) ? tg.GetString() : null;
                     // Per-stream duration (when present) is the length of the video track itself -
                     // the right yardstick for truncation checks, since we -map only this stream and
                     // the container's format.duration can be inflated by other (dropped) tracks.
@@ -123,7 +144,8 @@ public class MediaProcessor(
         var duration = root.TryGetProperty("format", out var f2) ? ParseSeconds(f2, "duration") : null;
 
         return new ProbeResult(width, height, duration, videoCodec, audioCodec, pixFmt, videoDuration,
-            creation, rotation is null ? null : Math.Abs(rotation.Value) % 360);
+            creation, rotation is null ? null : Math.Abs(rotation.Value) % 360,
+            videoProfile, level, codecTag);
     }
 
     // Rotation lives either in a stream tag (tags.rotate) or a "Display Matrix" side-data entry, depending
@@ -240,16 +262,14 @@ public class MediaProcessor(
     }
 
     /// <summary>
-    /// Transcodes to a widely-compatible H.264 High / AAC mp4 with faststart. Caps the longer edge
-    /// (default 1080p) and bitrate so the progressive stream stays smooth on mobile and the encoded
-    /// H.264 level stays within old-device limits. -pix_fmt yuv420p forces 8-bit 4:2:0 (browsers
-    /// can't decode the yuv420p10le a 10-bit/HDR source would otherwise produce).
+    /// Transcodes to a widely-compatible H.264 High / AAC mp4 with faststart. The caps come from the
+    /// caller (the item's conversion profile picks them), so an admin's change in Settings -> Video
+    /// applies to the next video without a restart, and a full-size upload can lift them entirely.
+    /// -pix_fmt yuv420p forces 8-bit 4:2:0 (browsers can't decode the yuv420p10le a 10-bit/HDR source
+    /// would otherwise produce).
     /// </summary>
-    public async Task<bool> TranscodeWebAsync(string input, string output, CancellationToken ct = default)
+    public async Task<bool> TranscodeWebAsync(string input, string output, VideoSettings settings, CancellationToken ct = default)
     {
-        // Read the quality knobs here, once per transcode, so an admin's change in Settings -> Video
-        // applies to the next video without a restart. Files already encoded keep the rendition they have.
-        var settings = await videoSettings.GetEffectiveAsync(ct);
         var tmp = ScratchPath(output);
         var (code, _, err) = await RunAsync(FfmpegPath, TranscodeArgs(input, tmp, settings), TranscodeTimeout, ct);
         if (code != 0)
@@ -272,9 +292,26 @@ public class MediaProcessor(
         var scale = v.MaxLongEdge > 0
             ? $"scale='min({v.MaxLongEdge},iw)':'min({v.MaxLongEdge},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
             : "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+
+        // An HDR source is 10-bit BT.2020/PQ. -pix_fmt yuv420p makes the output 8-bit SDR, but ffmpeg
+        // carries the source's colour tags into the output anyway, so the file ends up claiming PQ while
+        // holding SDR pixels - and a colour-managed browser then applies an HDR curve to them and renders
+        // the video wrong. setparams stamps what the output actually is.
+        //
+        // This is a label, not a conversion: it stops the browser mis-decoding, it does not tone-map. Doing
+        // that properly needs an ffmpeg built with zscale (the runtime image has it, a stock Homebrew build
+        // does not), so it is deliberately left out rather than shipped untested. It costs little: under the
+        // default profile an HDR upload keeps its H.265 rendition, so the devices that can actually show
+        // HDR are served the untouched original, and this file is the fallback for the ones that cannot.
+        //
+        // The obvious `-color_primaries bt709 -color_trc bt709 -colorspace bt709` output options do NOT
+        // work here - ffmpeg accepts them and writes the source's tags anyway. Verified against the real
+        // binary; don't "simplify" this back.
+        var colours = ",setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709";
+
         var rate = v.MaxrateKbps > 0 ? $"-maxrate {v.MaxrateKbps}k -bufsize {v.MaxrateKbps * 2}k " : "";
         return
-            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -vf \"{scale}\" " +
+            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -vf \"{scale}{colours}\" " +
             $"-c:v libx264 -preset {v.Preset} -crf {v.Crf} {rate}-profile:v high -pix_fmt yuv420p " +
             $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
     }
@@ -298,23 +335,29 @@ public class MediaProcessor(
     }
 
     /// <summary>
-    /// Re-probes a freshly produced web file and confirms it is actually servable: an H.264 mp4 with
-    /// its moov atom up front, whose duration matches the source (ffmpeg can exit 0 while writing a
-    /// truncated file). Guards against shipping a file that "plays but stalls/ends early".
+    /// Re-probes a freshly produced file and confirms it is actually servable: an mp4 with its moov atom
+    /// up front, in one of <paramref name="allowedCodecs"/>, whose duration matches the source (ffmpeg can
+    /// exit 0 while writing a truncated file). Guards against shipping a file that "plays but stalls".
+    ///
+    /// The codec set is the caller's, and that is what makes the heal work: the same check that stops a new
+    /// upload being stream-copied to H.265 also REJECTS an H.265 file produced by an older build, so a
+    /// legacy item's existing blob is not silently reused. Null accepts any codec (the as-uploaded lane,
+    /// where the uploader owns compatibility and we only guarantee it streams). Returns the probe of the
+    /// accepted file, so a caller that needs to describe it precisely doesn't probe it twice.
     /// </summary>
-    public async Task<bool> ValidateWebOutputAsync(string path, double? sourceDuration, CancellationToken ct = default)
+    public async Task<ProbeResult?> ValidateWebOutputAsync(string path, double? sourceDuration,
+        IReadOnlyCollection<string>? allowedCodecs, CancellationToken ct = default)
     {
         if (!File.Exists(path) || new FileInfo(path).Length == 0)
         {
-            return false;
+            return null;
         }
 
         var probe = await ProbeAsync(path, ct);
-        // A servable web file is an 8-bit 4:2:0 H.264 or HEVC mp4 with the moov atom up front.
-        if (probe?.VideoCodec is null || !CopyableVideoCodecs.Contains(probe.VideoCodec)
-                                      || !IsCopyablePixFmt(probe.VideoCodec, probe.PixFmt) || !IsFastStartMp4(path))
+        if (probe?.VideoCodec is null || !IsFastStartMp4(path)
+                                      || (allowedCodecs is not null && !allowedCodecs.Contains(probe.VideoCodec)))
         {
-            return false;
+            return null;
         }
 
         // Compare the produced video-track length against the source video track (not container
@@ -328,11 +371,11 @@ public class MediaProcessor(
             {
                 logger.LogWarning("Web output {Path} is {Actual:0.0}s vs source {Source:0.0}s - truncated",
                     path, dur, sourceDuration.Value);
-                return false;
+                return null;
             }
         }
 
-        return true;
+        return probe;
     }
 
     /// <summary>
@@ -415,23 +458,37 @@ public class MediaProcessor(
         return pixFmt is "yuv420p" or "yuvj420p";
     }
 
-    // Pixel formats we can stream-copy (no re-encode) per codec. H.264 only decodes 8-bit 4:2:0 in
-    // browsers. HEVC hardware also decodes Main 10, so 10-bit 4:2:0 HEVC is accepted too (HDR phone
-    // footage stays HDR); only H.264 High 10 and any 4:2:2 / 4:4:4 source still transcodes.
-    private static bool IsCopyablePixFmt(string? videoCodec, string? pixFmt)
+    // HEVC hardware decodes Main 10 wherever it decodes Main, so the H.265 rendition takes 10-bit 4:2:0
+    // as well and HDR phone footage stays HDR. 4:2:2 / 4:4:4 is neither.
+    private static bool IsHqPixFmt(string? pixFmt)
     {
-        return videoCodec == "hevc"
-            ? pixFmt is "yuv420p" or "yuvj420p" or "yuv420p10le"
-            : Is8BitYuv420(pixFmt);
+        return Is8BitYuv420(pixFmt) || pixFmt is "yuv420p10le";
     }
 
-    /// <summary>Codecs+pixel format an mp4 container can hold AND every target browser can decode, so a
-    /// lossless stream-copy remux is sufficient (no re-encode needed).</summary>
+    private static bool AudioIsCopyable(string? audioCodec)
+    {
+        return string.IsNullOrEmpty(audioCodec) || CopyableAudioCodecs.Contains(audioCodec);
+    }
+
+    /// <summary>Codecs + pixel format an mp4 can hold AND every browser on every OS can decode with no
+    /// hardware help, so a lossless stream-copy remux is enough and no re-encode is needed. This is the
+    /// contract behind the file <c>/f/{slug}</c> serves, so it is deliberately the narrowest thing that
+    /// always works: H.264, 8-bit 4:2:0, with AAC/MP3 or no audio.</summary>
     public static bool CanStreamCopyToMp4(string? videoCodec, string? audioCodec, string? pixFmt)
     {
         return videoCodec is not null && CopyableVideoCodecs.Contains(videoCodec)
-                                      && IsCopyablePixFmt(videoCodec, pixFmt)
-                                      && (string.IsNullOrEmpty(audioCodec) || CopyableAudioCodecs.Contains(audioCodec));
+                                      && Is8BitYuv420(pixFmt)
+                                      && AudioIsCopyable(audioCodec);
+    }
+
+    /// <summary>True when the source is worth keeping whole as the better, pickier rendition offered
+    /// ahead of the H.264 copy: H.265 at 8- or 10-bit 4:2:0. Nothing is risked by offering it, because a
+    /// browser that can't decode it skips the source.</summary>
+    public static bool CanKeepAsHq(string? videoCodec, string? audioCodec, string? pixFmt)
+    {
+        return videoCodec is not null && HqVideoCodecs.Contains(videoCodec)
+                                      && IsHqPixFmt(pixFmt)
+                                      && AudioIsCopyable(audioCodec);
     }
 
     /// <summary>True when the original file, as-is, is a browser-universal H.264 mp4-family file.</summary>
@@ -439,6 +496,43 @@ public class MediaProcessor(
     {
         return Mp4FamilyContainers.Contains(extension.ToLowerInvariant())
                && CanStreamCopyToMp4(videoCodec, audioCodec, pixFmt);
+    }
+
+    /// <summary>
+    /// The exact RFC 6381 codecs parameter for an H.265 rendition, e.g. <c>hvc1.2.4.L120.B0</c>, or null
+    /// when we cannot state it honestly - in which case the source simply isn't offered.
+    ///
+    /// Precision is the whole point: a browser only SKIPS a source it knows it can't decode, and it can
+    /// only know that if we tell it exactly what the source is. A bare "video/mp4" makes it accept the
+    /// file, download it, and only then discover it has no decoder, which is a dead end (the HTML spec
+    /// aborts resource selection on a decode error, so it never falls through to the next source).
+    ///
+    /// Must be built from a probe of the file we are actually going to SERVE, never the upload: an
+    /// hev1-tagged source becomes hvc1 in the remux, and claiming hvc1 for a file that is still hev1
+    /// would sail past Safari's type check and then fail to render.
+    ///
+    /// The tier is always reported as Main (B0). ffprobe does not expose general_tier_flag, and getting
+    /// it wrong can only make a decoder accept a High-tier file it then struggles with - which the share
+    /// page's decode-error fallback catches - whereas guessing the PROFILE wrong would be unrecoverable.
+    /// </summary>
+    public static string? HevcCodecs(ProbeResult probe)
+    {
+        // hev1 in an mp4 is refused outright by Safari/QuickTime, so only the hvc1 tag is ever advertised.
+        if (probe.VideoCodec != "hevc" || probe.CodecTag != "hvc1" || probe.Level is not > 0)
+        {
+            return null;
+        }
+
+        // profile_idc plus the compatibility-flags word browsers expect alongside it. Main and Main 10 are
+        // the only profiles we ever copy; anything else (Rext, 4:4:4) we can't describe, so we don't offer.
+        var (idc, compatibility) = probe.Profile?.Trim().ToLowerInvariant() switch
+        {
+            "main" => (1, 6),
+            "main 10" => (2, 4),
+            _ => (0, 0)
+        };
+
+        return idc == 0 ? null : $"hvc1.{idc}.{compatibility}.L{probe.Level}.B0";
     }
 
     private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
@@ -574,4 +668,7 @@ public record ProbeResult(
     string? PixFmt = null,
     double? VideoDuration = null,
     DateTime? CreationTimeUtc = null, // format.tags.creation_time (video capture date)
-    int? Rotation = null); // 0/90/180/270 display rotation
+    int? Rotation = null, // 0/90/180/270 display rotation
+    string? Profile = null, // codec profile, e.g. "Main", "Main 10", "High"
+    int? Level = null, // general_level_idc, e.g. 120 for level 4.0
+    string? CodecTag = null); // container tag, e.g. "hvc1", "hev1", "avc1"

@@ -1,5 +1,6 @@
 using Boxy.Data;
 using Boxy.Data.Entities;
+using Boxy.Web.Models;
 
 namespace Boxy.Web.Services;
 
@@ -12,6 +13,7 @@ public class MediaProcessingWorker(
     IDbContextFactory<AppDbContext> dbFactory,
     IBlobStore storage,
     MediaProcessor processor,
+    VideoSettingsProvider videoSettings,
     FileMetadataExtractor metadata,
     MediaProcessingQueue queue,
     ILogger<MediaProcessingWorker> logger) : BackgroundService
@@ -58,15 +60,19 @@ public class MediaProcessingWorker(
             .Select(m => m.Id)
             .ToListAsync(ct);
 
-        // One-time heal of items processed before universal-MP4 normalization: Ready videos still
-        // served as their original that a modern browser/device can't play everywhere - any .mov
-        // (served as video/quicktime, which desktop Chrome/Firefox reject) and any non-H.264 source
-        // (VP9/AV1/VP8/HEVC that fail on iOS Safari). A successful heal sets WebFileName and a failed
-        // one sets ErrorMessage, so a healed OR doomed item no longer matches - this self-terminates
-        // and never re-runs a hopeless transcode on every startup, and never touches fine H.264 mp4s.
+        // Heal every published video whose default lane is not yet H.264 - the ones a browser without an
+        // H.265 decoder cannot play at all. WebCodec is the invariant: it records what /f/{slug} actually
+        // hands a browser, so "not h264" is exactly the set that needs work, whether that is a legacy
+        // .mov, a VP9 upload, or an H.265 file an older build stream-copied on purpose.
+        //
+        // This self-terminates. A successful pass sets WebCodec to h264 and a doomed one sets ErrorMessage,
+        // so a healed or hopeless item stops matching. The old predicate did not: it keyed off
+        // "WebFileName == null && VideoCodec != h264", which a faststart H.265 mp4 matched forever,
+        // re-probing it on every single boot.
         var heal = await db.MediaItems
-            .Where(m => m.Status == MediaStatus.Ready && m.WebFileName == null && m.ErrorMessage == null
-                        && (m.Extension == ".mov" || (m.VideoCodec != null && m.VideoCodec != "h264")))
+            .Where(m => m.Status == MediaStatus.Ready && m.ErrorMessage == null
+                        && m.Profile != ConversionProfile.AsUploaded
+                        && m.VideoCodec != null && m.WebCodec != "h264")
             .Select(m => m.Id)
             .ToListAsync(ct);
 
@@ -167,7 +173,6 @@ public class MediaProcessingWorker(
             return;
         }
 
-        var copyable = MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
         // Video-track length is the right yardstick for the output truncation check (the container's
         // format.duration can be inflated by tracks we deliberately drop with -map).
         var expectedDuration = probe.VideoDuration ?? probe.Duration;
@@ -189,102 +194,215 @@ public class MediaProcessingWorker(
             }
         }
 
-        // "Keep original" upload: skip normalization. Serve an already-faststart mp4 as-is, else
-        // stream-copy the source into a faststart mp4 (codec untouched); if even that fails, serve the
-        // raw original. Never transcode - the uploader opted to own compatibility.
+        // Every lane rewrites both renditions from scratch, so a re-convert to a different profile can't
+        // leave the previous profile's rendition hanging around and being served.
+        var (previousWeb, previousHq) = (item.WebFileName, item.HqFileName);
+        item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
+
+        // "Don't convert it": ship exactly what was uploaded. Serve an already-faststart mp4 as-is, else
+        // stream-copy the source into a faststart mp4 so it at least streams (codec untouched); if even
+        // that fails, serve the raw original. Never transcode - the uploader opted to own compatibility.
         if (item.Profile == ConversionProfile.AsUploaded)
         {
-            var keptName = item.ContentHash + "-web.mp4";
+            var keptName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
             if (!IsProgressiveMp4(item.Extension, originalPath)
                 && await ProduceKeptOriginalAsync(originalPath, keptName, probe.VideoCodec, ct))
             {
                 item.WebFileName = keptName;
             }
 
-            item.Status = MediaStatus.Ready;
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation("Processed {Slug} keeping original codec {Codec} (web={Web})",
+            // Either way the codec is the source's: that is the whole point of this profile.
+            item.WebCodec = probe.VideoCodec;
+            await FinishAsync(db, item, previousWeb, previousHq, ct);
+            logger.LogInformation("Processed {Slug} as uploaded, codec {Codec} (remuxed={Remuxed})",
                 item.Slug, probe.VideoCodec, item.WebFileName is not null);
             return;
         }
 
-        // An already-progressive H.264 mp4/m4v is browser-universal as-is - serve the original,
-        // zero re-work, zero quality loss. Everything else (.mov, non-faststart mp4, .mkv/.webm,
-        // VP9/AV1, 10-bit H.264) gets a normalized -web.mp4; an HEVC source (8- or 10-bit, HDR kept)
-        // is stream-copied into it (with the hvc1 tag Safari needs) rather than re-encoded.
+        // The default lane is always H.264, whatever came in. An already-progressive H.264 mp4/m4v is
+        // exactly that already, so it is served untouched - zero re-work, zero quality loss, at whatever
+        // resolution it was uploaded at (the cap only ever applies to a file we are re-encoding anyway).
+        // Everything else (.mov, non-faststart mp4, .mkv/.webm, VP9/AV1, 10-bit, and now H.265) gets one.
+        var copyable = MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
         var serveAsIs = copyable && IsProgressiveMp4(item.Extension, originalPath);
-        if (!serveAsIs)
+        if (serveAsIs)
         {
-            var webName = item.ContentHash + "-web.mp4";
-            if (await ProduceWebFileAsync(originalPath, webName, copyable, probe.VideoCodec, expectedDuration, ct))
+            item.WebCodec = probe.VideoCodec;
+        }
+        else
+        {
+            var settings = ConversionProfiles.Settings(item.Profile, await videoSettings.GetEffectiveAsync(ct));
+            var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
+            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe.VideoCodec, expectedDuration, settings, ct);
+            if (produced is null)
             {
-                item.WebFileName = webName;
-            }
-            else if (healing)
-            {
-                // Never take a live, published video offline because a reprocess failed - leave it
-                // served as the original (still video/mp4 on the wire) rather than 404ing it. Record
-                // the failure so the one-time heal doesn't retry this doomed item on every startup.
-                logger.LogWarning("Heal reprocess couldn't produce a web file for {Slug}; left as original", item.Slug);
-                item.Status = MediaStatus.Ready;
-                item.ErrorMessage = "Legacy heal skipped (could not produce a web version)";
-                await db.SaveChangesAsync(ct);
-                return;
-            }
-            else
-            {
+                // Never take a live, published video offline because a reprocess failed - leave it serving
+                // what it already had rather than 404ing it, and record the reason so the heal doesn't
+                // retry this doomed item on every startup.
+                item.WebFileName = previousWeb;
+                item.HqFileName = previousHq;
                 await FailAsync(db, item, "Could not produce a playable web version", healing, ct);
                 return;
             }
+
+            item.WebFileName = webName;
+            item.WebCodec = produced.VideoCodec;
         }
 
-        item.Status = MediaStatus.Ready;
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Processed {Slug}: {W}x{H}, copyable={Copy}, servedAsIs={AsIs}, web={Web}",
-            item.Slug, item.Width, item.Height, copyable, serveAsIs, item.WebFileName is not null);
+        // The better rendition, offered ahead of the H.264 file and skipped by anything that can't decode
+        // it. Only "Best" pays the extra file for it, and only an H.265 source has anything to give.
+        if (ConversionProfiles.WantsHq(item.Profile))
+        {
+            await ProduceHqAsync(item, probe, originalPath, expectedDuration, ct);
+        }
+
+        await FinishAsync(db, item, previousWeb, previousHq, ct);
+        logger.LogInformation("Processed {Slug}: {W}x{H}, servedAsIs={AsIs}, web={Web} ({WebCodec}), hq={Hq}",
+            item.Slug, item.Width, item.Height, serveAsIs, item.WebFileName ?? "original", item.WebCodec,
+            item.HqCodecs ?? "none");
     }
 
     /// <summary>
-    /// Produces a validated, browser-universal <c>-web.mp4</c>: reuse a prior valid copy, else a
-    /// lossless stream-copy remux when the codecs allow it, else a full transcode. Every branch
-    /// re-probes the output (ffmpeg can exit 0 on a truncated file), so a bad remux falls through
-    /// to a transcode and a bad transcode fails cleanly instead of serving a broken file.
+    /// Mark the item Ready and drop whatever rendition it used to have and no longer references. The blob
+    /// names are content-addressed, so an unreferenced one is invisible to every other query: if it isn't
+    /// deleted here it is never deleted at all (IBlobStore has no enumeration API to find it again).
     /// </summary>
-    private async Task<bool> ProduceWebFileAsync(string originalPath, string webName, bool copyable, string? videoCodec, double? duration, CancellationToken ct)
+    private async Task FinishAsync(AppDbContext db, MediaItem item, string? previousWeb, string? previousHq, CancellationToken ct)
     {
-        // Reuse a valid web file from an earlier run / another item with identical content.
+        item.Status = MediaStatus.Ready;
+        await db.SaveChangesAsync(ct);
+
+        foreach (var stale in new[] { previousWeb, previousHq })
+        {
+            // Only ever clean up files the worker itself derived. HqFileName can point at the ORIGINAL
+            // blob (an upload that already is a faststart hvc1 mp4 needs no second file), and an original
+            // is not this method's to delete: it goes when its item does, on the paths that check the hash.
+            if (stale is null || stale == item.WebFileName || stale == item.HqFileName
+                || !ConversionProfiles.IsDerivedRendition(stale))
+            {
+                continue;
+            }
+
+            // Dedup-safe: identical bytes uploaded twice share their derived files too.
+            if (!await db.MediaItems.AnyAsync(m => m.WebFileName == stale || m.HqFileName == stale, ct))
+            {
+                await storage.DeleteAsync(stale, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Produces the validated H.264 file <c>/f/{slug}</c> serves: reuse a prior valid copy, else a lossless
+    /// stream-copy remux when the source is already H.264, else a full transcode. Every branch re-probes the
+    /// output (ffmpeg can exit 0 on a truncated file) against the universal codec set, so a bad remux falls
+    /// through to a transcode and a bad transcode fails cleanly instead of serving a broken file. Returns the
+    /// probe of what was produced, or null when nothing servable could be made.
+    /// </summary>
+    private async Task<ProbeResult?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
+        string? videoCodec, double? duration, VideoSettings settings, CancellationToken ct)
+    {
+        // Reuse a valid web file from an earlier run / another item with identical content. The codec set
+        // is what makes this safe across the H.265 change: an -h264.mp4 that somehow isn't H.264 is
+        // rejected here and rebuilt, rather than being trusted because the name looks right.
         if (await storage.ExistsAsync(webName, ct))
         {
             using var existing = await storage.GetLocalCopyAsync(webName, ct);
-            if (existing is not null && await processor.ValidateWebOutputAsync(existing.Path, duration, ct))
+            if (existing is not null
+                && await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.UniversalCodecs, ct) is { } reused)
             {
-                return true;
+                return reused;
             }
         }
 
         var scratch = ScratchOut(".mp4");
         try
         {
-            // Lossless remux when the source codecs are already browser-safe (H.264/HEVC + AAC/MP3/none).
+            // Lossless remux when the source is already H.264 + AAC/MP3/none and only the container is
+            // wrong (a .mov, or an mp4 with its moov atom at the end).
             if (copyable
                 && await processor.RemuxFastStartAsync(originalPath, scratch, videoCodec, ct)
-                && await processor.ValidateWebOutputAsync(scratch, duration, ct))
+                && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } remuxed)
             {
                 await storage.PutAsync(webName, scratch, ct);
-                return true;
+                return remuxed;
             }
 
             TryDeleteLocal(scratch);
 
             // Universal fallback: full transcode to H.264/AAC mp4.
-            if (await processor.TranscodeWebAsync(originalPath, scratch, ct)
-                && await processor.ValidateWebOutputAsync(scratch, duration, ct))
+            if (await processor.TranscodeWebAsync(originalPath, scratch, settings, ct)
+                && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } encoded)
             {
                 await storage.PutAsync(webName, scratch, ct);
-                return true;
+                return encoded;
             }
 
-            return false;
+            return null;
+        }
+        finally
+        {
+            TryDeleteLocal(scratch);
+        }
+    }
+
+    /// <summary>
+    /// Offers the source H.265 alongside the H.264 file, so a device with an HEVC decoder gets the upload
+    /// untouched - HDR, 10-bit, full bitrate - and everything else quietly skips it. Sets HqFileName and
+    /// HqCodecs, or leaves both null when there is nothing to offer or nothing we can describe exactly.
+    ///
+    /// Best case there is no second file at all: when the original is already a faststart, hvc1-tagged mp4
+    /// (most modern phones and drones), the "rendition" is the original blob and we write nothing.
+    ///
+    /// A failure here is never fatal. The H.264 file is already made, so the video plays for everyone; the
+    /// worst case is that Apple viewers see the H.264 copy instead of the nicer original.
+    /// </summary>
+    private async Task ProduceHqAsync(MediaItem item, ProbeResult probe, string originalPath, double? duration, CancellationToken ct)
+    {
+        if (!MediaProcessor.CanKeepAsHq(probe.VideoCodec, probe.AudioCodec, probe.PixFmt))
+        {
+            return;
+        }
+
+        // The upload IS the rendition: already an mp4 that streams, already tagged the way Safari demands.
+        if (IsProgressiveMp4(item.Extension, originalPath) && MediaProcessor.HevcCodecs(probe) is { } asIs)
+        {
+            item.HqFileName = item.ContentHash + item.Extension;
+            item.HqCodecs = asIs;
+            return;
+        }
+
+        var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
+        if (await storage.ExistsAsync(hqName, ct))
+        {
+            using var existing = await storage.GetLocalCopyAsync(hqName, ct);
+            if (existing is not null
+                && await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct) is { } reused
+                && MediaProcessor.HevcCodecs(reused) is { } reusedCodecs)
+            {
+                item.HqFileName = hqName;
+                item.HqCodecs = reusedCodecs;
+                return;
+            }
+        }
+
+        var scratch = ScratchOut(".mp4");
+        try
+        {
+            // Stream-copy only. Re-encoding H.265 to H.265 would burn an hour to lose quality; if the copy
+            // won't go into an mp4, there is simply nothing better to offer than the H.264 file.
+            if (await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct)
+                && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.HqCodecSet, ct) is { } made
+                // Describe the file we are about to SERVE, not the one that came in: the remux forces the
+                // hvc1 tag, so this is the only probe whose answer is true of the bytes a browser will get.
+                && MediaProcessor.HevcCodecs(made) is { } codecs)
+            {
+                await storage.PutAsync(hqName, scratch, ct);
+                item.HqFileName = hqName;
+                item.HqCodecs = codecs;
+                return;
+            }
+
+            logger.LogInformation("No H.265 rendition for {Slug}; the H.264 file is the only source", item.Slug);
         }
         finally
         {
