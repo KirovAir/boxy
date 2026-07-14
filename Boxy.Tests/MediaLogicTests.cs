@@ -145,6 +145,11 @@ public class MediaLogicTests
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-asis.mp4"));
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.mp4"));
 
+        // The name every lane used before the lanes were named. Forgetting it meant that healing a legacy
+        // item replaced its web file and then declined to delete the old one, because it no longer
+        // recognised it as something of ours. That leaked most of a gigabyte on a live instance.
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-web.mp4"));
+
         // The load-bearing case: HqFileName points at the ORIGINAL when the upload is already a faststart
         // hvc1 mp4. Cleaning up a stale rendition must never treat that as its own file to delete - after a
         // replace the item's hash has moved on, and another item may still share those bytes by dedup.

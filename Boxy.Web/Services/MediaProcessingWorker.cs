@@ -70,6 +70,12 @@ public class MediaProcessingWorker(
         //
         // Evaluated in memory, over a narrow projection, because the rules compose blob names from the
         // profile and that is not worth expressing as a CASE in SQL for a query that runs once at boot.
+        // Note this does NOT exclude drop-offs, and must not. It is tempting - a box's contents are only
+        // ever seen by its owner, so converting them automatically is CPU spent for nobody - but the way to
+        // stop that is to give a drop-off a profile that asks for nothing (see ConversionProfiles.BoxFallback),
+        // not to make the scan blind to boxes. An owner CAN ask for a box file to be converted, with Convert
+        // again, and that request lives in an in-memory queue: a scan that skipped boxes would drop it on the
+        // next restart and leave the item claiming a profile it never got.
         var heal = (await db.MediaItems
                 .Where(m => m.Status == MediaStatus.Ready && m.ErrorMessage == null && m.VideoCodec != null)
                 .Select(m => new

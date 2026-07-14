@@ -20,17 +20,20 @@ public class UploadController(
     ChunkedUploadService chunked,
     UploadFinalizer finalizer,
     IBlobStore storage,
-    VideoSettingsProvider videoSettings,
     ILogger<UploadController> logger) : Controller
 {
-    /// <summary>What happens to a video dropped into this box: the box's own default, else the instance
-    /// default. The drop-off form deliberately never sends a profile - the sender is anonymous, has no idea
-    /// who will watch, and this endpoint takes no antiforgery token, so not accepting the value at all is
-    /// better than accepting and validating it. The box owner makes the choice once, on the box.</summary>
-    private async Task<ConversionProfile> ProfileForDropAsync(Bucket bucket, CancellationToken ct = default)
+    /// <summary>
+    /// What happens to a video dropped into this box: the box own setting, else leave the file alone.
+    ///
+    /// The drop-off form deliberately never sends a profile - the sender is anonymous, has no idea who will
+    /// watch, and this endpoint takes no antiforgery token, so not accepting the value at all beats
+    /// accepting and validating it. The box owner makes the choice once, on the box.
+    ///
+    /// Note it does NOT fall through to the site default, which governs shares. See ConversionProfiles.BoxFallback.
+    /// </summary>
+    private static ConversionProfile ProfileForDrop(Bucket bucket)
     {
-        var settings = await videoSettings.GetEffectiveAsync(ct);
-        return ConversionProfiles.Resolve(null, bucket.DefaultProfile, settings.DefaultProfile);
+        return bucket.DefaultProfile ?? ConversionProfiles.BoxFallback;
     }
 
     // no-store: the HTML must never be cached, so mobile browsers always load the current
@@ -96,7 +99,7 @@ public class UploadController(
             {
                 await using var stream = file.OpenReadStream();
                 await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, bucket.Id, false, token,
-                    profile: await ProfileForDropAsync(bucket, ct), maxBytes: maxBytes, quotaOwnerId: bucket.OwnerId, ct: ct);
+                    profile: ProfileForDrop(bucket), maxBytes: maxBytes, quotaOwnerId: bucket.OwnerId, ct: ct);
                 count++;
             }
             catch (QuotaExceededException)
@@ -195,7 +198,7 @@ public class UploadController(
         var token = GetOrCreateUploaderToken();
         var layout = new UploadLayout(size, chunkSize, total);
         var maxBytes = await MaxUploadBytesAsync(bucket);
-        var profile = await ProfileForDropAsync(bucket);
+        var profile = ProfileForDrop(bucket);
         var (bucketId, ownerId) = (bucket.Id, bucket.OwnerId);
 
         var run = finalizer.StartOrJoin(uploadId, (services, ct) => AssembleAsync(services,

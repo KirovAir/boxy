@@ -11,8 +11,19 @@ namespace Boxy.Web;
 /// </summary>
 public static class ConversionProfiles
 {
-    /// <summary>What we do when nobody has said otherwise: play everywhere, keep the good copy too.</summary>
+    /// <summary>What a SHARE becomes when nobody has said otherwise: play everywhere, keep the good copy
+    /// too. A share faces the public, and you do not get to know who the public is.</summary>
     public const ConversionProfile Fallback = ConversionProfile.Best;
+
+    /// <summary>
+    /// What a DROP-OFF becomes when its box has not said otherwise, and deliberately not the same answer.
+    ///
+    /// Nothing dropped in a box is ever published, so its audience is exactly one person: the box owner,
+    /// who already has the original and a download button. Converting it buys that person nothing and costs
+    /// a full encode per dropped video. The trade is that an H.265 clip will not play in the owner's own
+    /// inline preview on a browser with no HEVC decoder; a box whose owner wants that can be set to convert.
+    /// </summary>
+    public const ConversionProfile BoxFallback = ConversionProfile.AsUploaded;
 
     /// <summary>The picker, in the order it is offered. Best first: it is the default and the safe answer.</summary>
     public static readonly ConversionProfile[] Choices =
@@ -124,8 +135,15 @@ public static class ConversionProfiles
     /// <summary>The suffix of the kept H.265 rendition. Not per-profile: only one profile makes one.</summary>
     public const string HqSuffix = "-hevc.mp4";
 
+    /// <summary>The name every lane wrote to before the lanes had names of their own. Still ours, and still
+    /// on disk on any instance that predates the split, so it MUST be listed here: an item healed out of
+    /// the old world replaces its web file, and a cleanup that doesn't recognise the old name as a
+    /// rendition leaves the old file behind forever. On a real instance that leaked most of a gigabyte
+    /// across a dozen videos.</summary>
+    private const string LegacyWebSuffix = "-web.mp4";
+
     private static readonly string[] RenditionSuffixes =
-        ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix];
+        ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix, LegacyWebSuffix];
 
     /// <summary>What an item currently has on disk, against what its profile says it should have. Just
     /// enough columns to answer <see cref="NeedsReprocessing"/> without loading whole entities.</summary>

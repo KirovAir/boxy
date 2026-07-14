@@ -218,8 +218,7 @@ public class DashboardController(
         {
             Bucket = bucket, Files = files, Filter = filter, KindCounts = kindCounts,
             ActiveUploader = resolved?.Identity,
-            BaseUrl = config.PublicBaseUrl(Request), OwnerEmail = ownerEmail,
-            InstanceDefaultProfile = (await videoSettings.GetEffectiveAsync(ct)).DefaultProfile
+            BaseUrl = config.PublicBaseUrl(Request), OwnerEmail = ownerEmail
         });
     }
 

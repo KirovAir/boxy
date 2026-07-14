@@ -105,7 +105,7 @@
 
             <select name="profile" id="boxprofile" class="form-select form-select-sm mb-1" style="max-width: 24rem;">
                 <option value="" selected="@(Model.Bucket.DefaultProfile is null)">
-                    Use the site default (@ConversionProfiles.Label(Model.InstanceDefaultProfile))
+                    @ConversionProfiles.Label(ConversionProfiles.BoxFallback) (the default for boxes)
                 </option>
                 @foreach (var p in ConversionProfiles.Choices)
                 {
