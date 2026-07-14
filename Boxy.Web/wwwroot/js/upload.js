@@ -9,7 +9,11 @@
 
     var CHUNK = 16 * 1024 * 1024; // 16 MB - few requests, safe under the 100 MB proxy/tunnel limit
     var CONCURRENCY = 6;          // chunks in flight per file - more parallelism to fill a high-latency pipe
-    var RETRIES = 4;
+    // A chunk gets 8 retries backing off to 30s, so a drop-out has a couple of minutes to come back before
+    // the file is called failed. The old budget was 4 tries over 7.5s, which a tunnel or a lift outlasts.
+    var RETRIES = 8;
+    var MAX_BACKOFF = 30000;
+    var OFFLINE_WAIT = 15000;     // longest we sit waiting for an 'online' event before trying anyway
 
     var chunkUrl = form.dataset.chunkUrl;
     var completeUrl = form.dataset.completeUrl;
@@ -266,7 +270,7 @@
             var prev = recallUpload(f);   // same file picked again → resume its server-side parts
             var job = {
                 file: f, sent: 0, state: 'queued', el: null, rate: 0, lastT: 0, lastB: 0,
-                xhrs: [], loaded: {}, cancelled: false,
+                xhrs: [], loaded: {}, cancelled: false, error: null,
                 uploadId: prev ? prev.uploadId : randomId(),
                 total: Math.max(1, Math.ceil(f.size / CHUNK)),
                 resume: !!prev
@@ -390,12 +394,42 @@
         launch();
     }
 
+    // A 4xx is the server's considered answer (too big, box full, bad request) - re-sending the same bytes
+    // will get the same answer, so don't burn retries on it. Everything else (5xx, a proxy hiccup, a dropped
+    // connection) is worth another go. 408/429 are explicit "try again" codes.
+    function isPermanent(status) {
+        return status >= 400 && status < 500 && status !== 408 && status !== 429;
+    }
+
+    // Exponential backoff with jitter, so six parallel chunks don't all retry on the same beat and
+    // re-collapse a link that is only just back.
+    function backoffMs(tries) {
+        var base = Math.min(MAX_BACKOFF, 500 * Math.pow(2, tries));
+        return Math.round(base * (0.75 + Math.random() * 0.5));
+    }
+
+    // Resolves once the browser believes it's online again, or after a cap - never trust the event alone.
+    function whenOnline() {
+        if (navigator.onLine !== false) return Promise.resolve();
+        return new Promise(function (resolve) {
+            var timer = setTimeout(go, OFFLINE_WAIT);
+
+            function go() {
+                window.removeEventListener('online', go);
+                clearTimeout(timer);
+                resolve();
+            }
+
+            window.addEventListener('online', go);
+        });
+    }
+
     function sendChunk(job, idx) {
         var start = idx * CHUNK;
         var blob = job.file.slice(start, Math.min(start + CHUNK, job.file.size));
-        return attempt(RETRIES);
+        return attempt(0);
 
-        function attempt(left) {
+        function attempt(tries) {
             return new Promise(function (resolve, reject) {
                 if (job.cancelled) {
                     resolve();
@@ -421,7 +455,16 @@
                         job.loaded[idx] = blob.size;
                         onProgress(job);
                         resolve();
-                    } else fail();
+                        return;
+                    }
+                    if (isPermanent(xhr.status)) {
+                        var body = errorOf(xhr);
+                        if (body.restart) restart(job);
+                        job.error = body.error || null;
+                        reject(new Error('chunk ' + idx + ' rejected'));
+                        return;
+                    }
+                    fail();
                 };
                 xhr.onerror = function () {
                     detach(job, xhr);
@@ -438,12 +481,16 @@
                         resolve();
                         return;
                     }
-                    if (left > 0) {
-                        var backoff = 500 * Math.pow(2, RETRIES - left); // exponential: 0.5s, 1s, 2s, 4s
-                        setTimeout(function () {
-                            attempt(left - 1).then(resolve, reject);
-                        }, backoff);
-                    } else reject(new Error('chunk ' + idx + ' failed'));
+                    if (tries >= RETRIES) {
+                        reject(new Error('chunk ' + idx + ' failed'));
+                        return;
+                    }
+                    // Sit out the backoff, then wait for the network before spending the next attempt.
+                    setTimeout(function () {
+                        whenOnline().then(function () {
+                            attempt(tries + 1).then(resolve, reject);
+                        });
+                    }, backoffMs(tries));
                 }
             });
         }
@@ -473,7 +520,9 @@
                     // The server rejected the staged parts and threw them away (a stale part from an older
                     // build, say). Start the next attempt from a clean slate rather than resuming onto
                     // parts that no longer exist.
-                    if (errorOf(xhr).restart) restart(job);
+                    var body = errorOf(xhr);
+                    if (body.restart) restart(job);
+                    job.error = body.error || null;
                     job.state = 'failed';
                     updateJob(job);
                 }
@@ -499,12 +548,14 @@
 
     // Throw away everything we know about this job's server-side parts and give it a fresh upload id, so
     // the next attempt re-sends the whole file instead of resuming onto parts the server has discarded.
+    // The new id is remembered straight away: the attempt that follows stages chunks under it, and a reload
+    // part-way through that attempt should still be able to pick them up.
     function restart(job) {
-        forgetUpload(job);
         job.uploadId = randomId();
         job.resume = false;
         job.loaded = {};
         job.sent = 0;
+        rememberUpload(job);
     }
 
     function cancel(job) {
@@ -536,6 +587,12 @@
         job.sent = 0;
         job.loaded = {};
         job.xhrs = [];
+        job.error = null;
+        job.rate = 0;
+        // Carry on from what the server already holds. Without this a file that failed at 95% re-sent every
+        // byte from the start, which on a multi-GB upload is the difference between seconds and an hour.
+        job.resume = true;
+        rememberUpload(job);
         updateJob(job);
         if (!running) pump();
     }
@@ -593,7 +650,12 @@
             : job.state === 'finishing' ? 'Finishing…'
                 : job.state === 'queued' ? 'Queued'
                     : pct + '%';
-        el.querySelector('.j-rate').textContent = job.state === 'uploading' && job.rate ? fmtRate(job.rate) : '';
+        // The rate slot doubles as the place to say why a file failed, when the server told us.
+        var rate = el.querySelector('.j-rate');
+        rate.className = 'j-rate' + (job.state === 'failed' && job.error ? ' text-danger' : '');
+        rate.textContent = job.state === 'failed' && job.error ? job.error
+            : job.state === 'uploading' && job.rate ? fmtRate(job.rate)
+                : '';
         var x = el.querySelector('.job-cancel');
         if (x) x.title = job.state === 'failed' ? 'Dismiss' : 'Cancel';
     }
