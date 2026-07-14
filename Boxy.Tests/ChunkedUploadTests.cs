@@ -103,6 +103,34 @@ public class ChunkedUploadTests
         Assert.AreEqual(-1, ChunkedUploadService.ExpectedChunkLength(-1, 250, 100));
     }
 
+    // ── Which volume the free-space reserve is measured against ─────────────
+    [TestMethod]
+    public void DeepestMountFor_PicksTheVolumeThePathIsActuallyOn()
+    {
+        // Boxy's storage is normally a mounted volume (/data in the container). Measuring free space against
+        // the root filesystem instead would watch a completely different disk - one that is nowhere near full
+        // while the real one is - and the reserve would never fire.
+        string[] mounts = ["/", "/data", "/data/media", "/database"];
+
+        Assert.AreEqual("/data", ChunkedUploadService.DeepestMountFor(mounts, "/data/storage/_tmp"));
+        Assert.AreEqual("/data/media", ChunkedUploadService.DeepestMountFor(mounts, "/data/media/blobs"));
+        Assert.AreEqual("/data", ChunkedUploadService.DeepestMountFor(mounts, "/data"));
+        Assert.AreEqual("/", ChunkedUploadService.DeepestMountFor(mounts, "/srv/storage"));
+
+        // A prefix isn't a parent: /database is its own volume, not something under /data.
+        Assert.AreEqual("/database", ChunkedUploadService.DeepestMountFor(mounts, "/database/storage"));
+    }
+
+    [TestMethod]
+    public void DeepestMountFor_ResolvesARealPathToARealMount()
+    {
+        var mounts = DriveInfo.GetDrives().Select(d => d.RootDirectory.FullName).ToArray();
+        var resolved = ChunkedUploadService.DeepestMountFor(mounts, _root);
+
+        Assert.IsNotNull(resolved, "the scratch path must resolve to a mount, or the reserve silently does nothing");
+        CollectionAssert.Contains(mounts, resolved);
+    }
+
     // ── Resume ──────────────────────────────────────────────────────────────
     [TestMethod]
     public async Task ExistingChunks_ReportsOnlyPartsThatFitTheirSlot()

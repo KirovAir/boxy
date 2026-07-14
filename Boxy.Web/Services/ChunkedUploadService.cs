@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Boxy.Data.Entities;
@@ -80,11 +81,17 @@ public partial class ChunkedUploadService(
         long free;
         try
         {
-            free = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(storage.ScratchDir))!).AvailableFreeSpace;
+            var volume = Volumes.GetOrAdd(storage.ScratchDir, VolumeFor);
+            if (volume is null)
+            {
+                return; // can't work out which volume this is; don't invent a reason to reject uploads
+            }
+
+            free = volume.AvailableFreeSpace;
         }
         catch (Exception ex)
         {
-            // Can't tell (an odd mount, a platform that won't say). Don't invent a reason to reject uploads.
+            // Can't tell (an odd mount, a platform that won't say). Better to allow than to block everything.
             logger.LogDebug(ex, "Could not read free space for the scratch volume");
             return;
         }
@@ -93,6 +100,49 @@ public partial class ChunkedUploadService(
         {
             logger.LogWarning("Refusing {Wanted} bytes: {Free} free, {Reserve} reserved", wanted, free, reserve);
             throw new StorageFullException(free);
+        }
+    }
+
+    // Resolved once per storage path: working out the mount reads the system's mount table, and the scratch
+    // directory doesn't move. The free space itself is read fresh from the volume every time.
+    private static readonly ConcurrentDictionary<string, DriveInfo?> Volumes = new();
+
+    private static DriveInfo? VolumeFor(string path)
+    {
+        // It has to be the volume the storage path actually sits on, not the root filesystem. Boxy's storage
+        // is normally a mounted volume (/data in the container), so asking "/" how much room is left would
+        // measure a completely different disk - one that is nowhere near full while the real one is.
+        var drives = DriveInfo.GetDrives();
+        var mount = DeepestMountFor(drives.Select(d => d.RootDirectory.FullName), path);
+        return mount is null ? null : drives.FirstOrDefault(d => d.RootDirectory.FullName == mount);
+    }
+
+    /// <summary>The deepest mount point containing <paramref name="path"/>, matched on whole path segments so
+    /// that <c>/data</c> doesn't claim <c>/database</c>.</summary>
+    public static string? DeepestMountFor(IEnumerable<string> mounts, string path)
+    {
+        var full = Path.GetFullPath(path);
+        string? best = null;
+        foreach (var mount in mounts)
+        {
+            if (Contains(mount, full) && (best is null || mount.Length > best.Length))
+            {
+                best = mount;
+            }
+        }
+
+        return best;
+
+        static bool Contains(string mount, string full)
+        {
+            if (!full.StartsWith(mount, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return mount.Length == full.Length
+                   || mount.EndsWith(Path.DirectorySeparatorChar)           // the root itself, "/" or "C:\"
+                   || full[mount.Length] == Path.DirectorySeparatorChar;    // a clean segment boundary
         }
     }
 

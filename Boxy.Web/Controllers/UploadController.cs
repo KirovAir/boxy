@@ -2,7 +2,6 @@ using Boxy.Data;
 using Boxy.Data.Entities;
 using Boxy.Data.Extensions;
 using Boxy.Web.Models;
-using Microsoft.AspNetCore.Http.Features;
 using Boxy.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -68,17 +67,13 @@ public class UploadController(
 
         var token = GetOrCreateUploaderToken();
         var maxBytes = await MaxUploadBytesAsync(bucket);
-
-        // Cap the body before anything reads it. The framework buffers a multipart post to disk while model
-        // binding, so by the time we could look at file.Length the bytes have already landed - on an open
-        // drop-off that's an unbounded write by a stranger. Nothing to cap against when the box is uncapped
-        // (an admin's), which is the same bargain the rest of the upload paths strike.
-        if (maxBytes > 0 && HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
-        {
-            limit.MaxRequestBodySize = maxBytes + (1024 * 1024); // room for the multipart envelope
-        }
-
         var count = 0;
+
+        // Note: the body is already on disk by the time we get here. MVC's form value provider reads the
+        // multipart during model binding, so an oversized file is buffered before file.Length can reject it,
+        // and the request as a whole is unbounded. Capping it has to happen in a resource filter, ahead of
+        // model binding - it can't be done from here. The chunked engine below is the path browsers actually
+        // take and is bounded properly; this fallback is only reachable with JavaScript off.
         foreach (var file in Request.Form.Files)
         {
             if (file.Length == 0 || (maxBytes > 0 && file.Length > maxBytes))
