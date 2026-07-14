@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Boxy.Data.Entities;
@@ -14,6 +15,13 @@ public class UploadIncompleteException(string reason) : Exception(reason);
 public class StorageFullException(long freeBytes) : Exception($"Only {freeBytes} bytes free on the working volume")
 {
     public long FreeBytes { get; } = freeBytes;
+}
+
+/// <summary>Thrown when a single chunk body runs past the ceiling. Only a client that isn't ours can manage
+/// this - the uploader sends 16 MB chunks - so it means someone is trying to write an unbounded body.</summary>
+public class ChunkTooLargeException(long maxBytes) : Exception($"A chunk may not exceed {maxBytes} bytes")
+{
+    public long MaxBytes { get; } = maxBytes;
 }
 
 /// <summary>
@@ -37,6 +45,19 @@ public partial class ChunkedUploadService(
 {
     // 1 MB copy buffer: the default 80 KB makes a needless number of syscalls over a multi-GB file.
     private const int CopyBuffer = 1024 * 1024;
+
+    /// <summary>
+    /// The most one chunk request may write. The uploader sends 16 MB chunks, so this is generous headroom
+    /// rather than a real constraint - what it is actually for is putting a ceiling on a request body that
+    /// nothing else bounds. A chunk body is not seekable, so its length is not known before it arrives, and
+    /// the drop-off endpoint is open to anyone with the box's link: without a ceiling enforced as the bytes
+    /// land, one request can write until the volume is full.
+    /// </summary>
+    public const int MaxChunkBytes = 64 * 1024 * 1024;
+
+    // The volume can fill up while a chunk is arriving - other uploads are landing at the same time - so the
+    // reserve gets re-checked as the bytes come in, not only before them.
+    private const long FreeSpaceCheckEvery = 16L * 1024 * 1024;
 
     [GeneratedRegex("^[a-zA-Z0-9]{8,64}$")]
     private static partial Regex UploadIdPattern();
@@ -102,7 +123,8 @@ public partial class ChunkedUploadService(
         }
 
         var dir = PartDir(uploadId);
-        EnsureRoomOnDisk(chunk.CanSeek ? chunk.Length : 0);
+        // Reserve for the largest body this request is allowed to write, since we can't know its length yet.
+        EnsureRoomOnDisk(MaxChunkBytes);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, index.ToString());
         var tmp = Path.Combine(dir, $"{index}.{Guid.NewGuid():N}.part");
@@ -110,7 +132,7 @@ public partial class ChunkedUploadService(
         {
             await using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true))
             {
-                await chunk.CopyToAsync(fs, CopyBuffer, ct);
+                await CopyBoundedAsync(chunk, fs, ct);
             }
 
             File.Move(tmp, path, true);
@@ -127,6 +149,43 @@ public partial class ChunkedUploadService(
         {
             TryDeleteDir(dir);
             throw new UploadTooLargeException(maxBytes);
+        }
+    }
+
+    /// <summary>
+    /// Copy a chunk body to disk, refusing it the moment it runs past the ceiling and re-checking the free
+    /// space reserve as the bytes land. Copying the body straight out with no bound is what would let a
+    /// single request fill the volume: nothing upstream knows how long it is.
+    /// </summary>
+    private async Task CopyBoundedAsync(Stream source, Stream destination, CancellationToken ct)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBuffer);
+        try
+        {
+            long written = 0;
+            long sinceCheck = 0;
+            int read;
+            while ((read = await source.ReadAsync(buffer.AsMemory(0, CopyBuffer), ct)) > 0)
+            {
+                written += read;
+                if (written > MaxChunkBytes)
+                {
+                    throw new ChunkTooLargeException(MaxChunkBytes);
+                }
+
+                sinceCheck += read;
+                if (sinceCheck >= FreeSpaceCheckEvery)
+                {
+                    sinceCheck = 0;
+                    EnsureRoomOnDisk(0);
+                }
+
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

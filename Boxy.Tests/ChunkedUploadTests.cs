@@ -259,6 +259,66 @@ public class ChunkedUploadTests
     }
 
     [TestMethod]
+    public async Task WriteChunkAsync_RefusesABodyPastTheChunkCeiling_WithoutWritingItAll()
+    {
+        // A chunk body is not seekable, so its length isn't known before it arrives, and the drop-off
+        // endpoint is open to anyone with the link. The ceiling therefore has to bite while the bytes are
+        // landing: a stream that never ends must not be able to write until the volume is full.
+        var id = NewUploadId();
+        var endless = new EndlessStream();
+
+        await Assert.ThrowsExactlyAsync<ChunkTooLargeException>(() =>
+            _chunked.WriteChunkAsync(id, 0, endless));
+
+        Assert.IsTrue(endless.BytesRead <= ChunkedUploadService.MaxChunkBytes + (1024 * 1024),
+            "the copy must stop at the ceiling, not drain the whole body");
+        Assert.AreEqual(0, Directory.GetFiles(Path.Combine(_storage.ScratchDir, id)).Length,
+            "a refused chunk leaves no part behind");
+    }
+
+    /// <summary>A body that never ends, like a client that just keeps sending.</summary>
+    private sealed class EndlessStream : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            BytesRead += count;
+            return count;
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void SetLength(long value)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    [TestMethod]
     public async Task Abort_RemovesEveryStagedPart()
     {
         var id = NewUploadId();

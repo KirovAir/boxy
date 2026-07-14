@@ -343,7 +343,7 @@ public class DashboardController(
     // are published immediately.
     [HttpPost("upload/chunk")]
     [IgnoreAntiforgeryToken]
-    [DisableRequestSizeLimit]
+    [RequestSizeLimit(ChunkedUploadService.MaxChunkBytes)]
     public async Task<IActionResult> UploadChunk([FromQuery] string uploadId, [FromQuery] int index, CancellationToken ct)
     {
         try
@@ -361,6 +361,10 @@ public class DashboardController(
             {
                 StatusCode = StatusCodes.Status507InsufficientStorage
             };
+        }
+        catch (ChunkTooLargeException)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "That chunk is too large." });
         }
         catch (ArgumentException)
         {

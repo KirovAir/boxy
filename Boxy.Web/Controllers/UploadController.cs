@@ -2,6 +2,7 @@ using Boxy.Data;
 using Boxy.Data.Entities;
 using Boxy.Data.Extensions;
 using Boxy.Web.Models;
+using Microsoft.AspNetCore.Http.Features;
 using Boxy.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -67,6 +68,16 @@ public class UploadController(
 
         var token = GetOrCreateUploaderToken();
         var maxBytes = await MaxUploadBytesAsync(bucket);
+
+        // Cap the body before anything reads it. The framework buffers a multipart post to disk while model
+        // binding, so by the time we could look at file.Length the bytes have already landed - on an open
+        // drop-off that's an unbounded write by a stranger. Nothing to cap against when the box is uncapped
+        // (an admin's), which is the same bargain the rest of the upload paths strike.
+        if (maxBytes > 0 && HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+        {
+            limit.MaxRequestBodySize = maxBytes + (1024 * 1024); // room for the multipart envelope
+        }
+
         var count = 0;
         foreach (var file in Request.Form.Files)
         {
@@ -96,8 +107,10 @@ public class UploadController(
     }
 
     // ── Chunked engine (JS): parallel, out-of-order chunks by index ───────────
+    // Bounded, unlike the whole-file endpoints: a chunk is 16 MB by construction, and this endpoint is open
+    // to anyone with the box's link, so there's no reason to let one request write an unbounded body.
     [HttpPost("/api/u/{slug}/chunk")]
-    [DisableRequestSizeLimit]
+    [RequestSizeLimit(ChunkedUploadService.MaxChunkBytes)]
     public async Task<IActionResult> Chunk(string slug, [FromQuery] string uploadId, [FromQuery] int index, CancellationToken ct)
     {
         var bucket = await FindBucketAsync(slug);
@@ -118,6 +131,10 @@ public class UploadController(
         catch (StorageFullException)
         {
             return StorageFull();
+        }
+        catch (ChunkTooLargeException)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "That chunk is too large." });
         }
         catch (ArgumentException)
         {
