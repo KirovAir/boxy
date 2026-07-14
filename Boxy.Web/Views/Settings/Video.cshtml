@@ -24,6 +24,21 @@
         <form method="post" action="/settings/video">
             @Html.AntiForgeryToken()
 
+            <label class="form-label" for="defaultProfile">Default conversion</label>
+            <select name="defaultProfile" id="defaultProfile" class="form-select mb-1" style="max-width: 24rem;">
+                @foreach (var p in ConversionProfiles.Choices)
+                {
+                    <option value="@p" selected="@(p == Model.DefaultProfile)">@ConversionProfiles.Label(p)</option>
+                }
+            </select>
+            <div class="form-text mb-4">
+                What a video becomes when nobody picks anything else. <span class="mono">Best for every device</span>
+                makes two files out of an H.265 upload, so budget roughly three times the original on disk. On a
+                small server, set this to <span class="mono">Plays anywhere</span> and drop the encoding speed
+                below to <span class="mono">medium</span> - every phone video now goes through the encoder, where
+                an H.265 one used to be copied straight through in seconds.
+            </div>
+
             <label class="form-label" for="crf">Quality</label>
             <div class="input-group mb-1" style="max-width: 18rem;">
                 <input type="number" name="crf" id="crf" class="form-control" min="14" max="35" value="@Model.Crf"/>

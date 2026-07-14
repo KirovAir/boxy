@@ -530,6 +530,17 @@
         return el && el.value ? '&profile=' + encodeURIComponent(el.value) : '';
     }
 
+    // Keep the help text on whatever is selected: each option costs something different in disk and in
+    // waiting, and that is the whole basis for choosing between them.
+    var profileSelect = form.querySelector('select[name=profile]');
+    var profileHelp = document.getElementById('profileHelp');
+    if (profileSelect && profileHelp) {
+        profileSelect.addEventListener('change', function () {
+            var opt = profileSelect.options[profileSelect.selectedIndex];
+            profileHelp.textContent = (opt && opt.getAttribute('data-help')) || '';
+        });
+    }
+
     // Ask the server to assemble the staged parts into the finished file.
     //
     // Concatenating and hashing a multi-GB file takes minutes, which is longer than a reverse proxy will
@@ -859,11 +870,19 @@
             if (!slug) return;
             window.Boxy.lightbox(slug, row.getAttribute('data-kind') || 'video');
         });
+    }
+
+    // Anything on this page still converting - a drop-off row or a dashboard share card - gets watched.
+    if (document.querySelector('[data-status="processing"][data-slug]')) {
         startPolling();
     }
 
-    // Poll processing rows until they flip to a thumbnail - no reload needed.
+    // Poll anything still converting until it goes terminal, so a row flips to its poster without a
+    // reload. Deliberately not scoped to the drop-off list any more: the dashboard's share cards carry the
+    // same two attributes and need this more, because an H.265 upload used to be a stream copy that
+    // finished in seconds and is now a full encode that can run for minutes.
     var pollTimer = null;
+    var reloadWhenDone = false;
 
     function startPolling() {
         if (pollTimer) return;
@@ -872,10 +891,17 @@
     }
 
     function pollOnce() {
-        var rows = mineEl ? mineEl.querySelectorAll('.mine-item[data-status="processing"]') : [];
+        var rows = document.querySelectorAll('[data-status="processing"][data-slug]');
         if (!rows.length) {
             clearInterval(pollTimer);
             pollTimer = null;
+            // A page whose rows can't be swapped in place (the dashboard has no row endpoint) still has to
+            // show the finished thumbnail, so once nothing is converting any more, reload once.
+            if (reloadWhenDone) {
+                reloadWhenDone = false;
+                window.location.reload();
+            }
+
             return;
         }
         Array.prototype.forEach.call(rows, function (row) {
@@ -890,7 +916,11 @@
                     // Terminal: stop this row polling, then swap in the fresh server-rendered row - now
                     // with its poster/icon and full metadata - so no markup is patched here.
                     row.setAttribute('data-status', s.ready ? 'ready' : 'failed');
-                    insertOrReplaceRow(slug, false);
+                    if (rowBase && row.classList.contains('mine-item')) {
+                        insertOrReplaceRow(slug, false);
+                    } else {
+                        reloadWhenDone = true;
+                    }
                 }).catch(function () {
             });
         });

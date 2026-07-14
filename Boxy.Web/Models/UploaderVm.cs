@@ -1,3 +1,5 @@
+using Boxy.Data.Entities;
+
 namespace Boxy.Web.Models;
 
 /// <summary>Configures the shared chunked-uploader partial (_Uploader). One uploader per page -
@@ -22,6 +24,9 @@ public class UploaderVm
     /// <summary>Offer the video conversion choice (new share uploads only). A replace keeps the item's
     /// existing profile, and the public drop-off form takes the box's default instead of asking.</summary>
     public bool ConversionOption { get; init; }
+
+    /// <summary>Which conversion the picker starts on: the instance default, resolved server-side.</summary>
+    public ConversionProfile DefaultProfile { get; init; } = ConversionProfiles.Fallback;
 
     /// <summary>Authenticated forms carry the antiforgery token; the anonymous drop-off form doesn't.</summary>
     public bool Antiforgery { get; init; } = true;

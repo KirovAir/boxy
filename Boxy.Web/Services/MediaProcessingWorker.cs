@@ -60,21 +60,27 @@ public class MediaProcessingWorker(
             .Select(m => m.Id)
             .ToListAsync(ct);
 
-        // Heal every published video whose default lane is not yet H.264 - the ones a browser without an
-        // H.265 decoder cannot play at all. WebCodec is the invariant: it records what /f/{slug} actually
-        // hands a browser, so "not h264" is exactly the set that needs work, whether that is a legacy
-        // .mov, a VP9 upload, or an H.265 file an older build stream-copied on purpose.
+        // Reprocess every published video whose files no longer match what its profile asks for: the ones
+        // whose default lane still isn't H.264 (a browser with no H.265 decoder cannot play them at all),
+        // and the ones whose owner asked for a different conversion that the in-memory queue lost to a
+        // restart. ErrorMessage excludes the ones already found to be hopeless, so nothing is retried
+        // forever. See ConversionProfiles.NeedsReprocessing - the rules live there so they can be tested,
+        // and so this stays one definition rather than a predicate duplicated in SQL.
         //
-        // This self-terminates. A successful pass sets WebCodec to h264 and a doomed one sets ErrorMessage,
-        // so a healed or hopeless item stops matching. The old predicate did not: it keyed off
-        // "WebFileName == null && VideoCodec != h264", which a faststart H.265 mp4 matched forever,
-        // re-probing it on every single boot.
-        var heal = await db.MediaItems
-            .Where(m => m.Status == MediaStatus.Ready && m.ErrorMessage == null
-                        && m.Profile != ConversionProfile.AsUploaded
-                        && m.VideoCodec != null && m.WebCodec != "h264")
-            .Select(m => m.Id)
-            .ToListAsync(ct);
+        // Evaluated in memory, over a narrow projection, because the rules compose blob names from the
+        // profile and that is not worth expressing as a CASE in SQL for a query that runs once at boot.
+        var heal = (await db.MediaItems
+                .Where(m => m.Status == MediaStatus.Ready && m.ErrorMessage == null && m.VideoCodec != null)
+                .Select(m => new
+                {
+                    m.Id,
+                    State = new ConversionProfiles.RenditionState(m.Profile, m.ContentHash, m.VideoCodec,
+                        m.WebFileName, m.WebCodec, m.HqFileName)
+                })
+                .ToListAsync(ct))
+            .Where(x => ConversionProfiles.NeedsReprocessing(x.State))
+            .Select(x => x.Id)
+            .ToList();
 
         foreach (var id in pending)
         {
@@ -95,7 +101,7 @@ public class MediaProcessingWorker(
 
         if (heal.Count > 0)
         {
-            logger.LogInformation("Queued {Count} legacy item(s) for universal-MP4 heal", heal.Count);
+            logger.LogInformation("Queued {Count} video(s) whose files don't match their conversion profile", heal.Count);
         }
     }
 

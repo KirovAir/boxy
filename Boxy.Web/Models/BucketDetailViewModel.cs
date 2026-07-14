@@ -20,4 +20,8 @@ public class BucketDetailViewModel
     /// <summary>The owner's current email (from the database, not the possibly-stale auth cookie), used
     /// to show and gate the "email me on drop-offs" toggle. This is where the worker actually sends.</summary>
     public string? OwnerEmail { get; init; }
+
+    /// <summary>The instance default, so the box's "use the site default" option can name what that is
+    /// rather than making the owner go and look it up.</summary>
+    public required ConversionProfile InstanceDefaultProfile { get; init; }
 }

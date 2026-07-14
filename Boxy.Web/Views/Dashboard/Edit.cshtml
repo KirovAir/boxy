@@ -218,6 +218,14 @@
                 {
                     <dt>Format</dt>
                     <dd>@Model.VideoCodec@(Model.AudioCodec is not null ? " / " + Model.AudioCodec : "")@(Model.WebFileName is not null ? " (converted for web)" : "")</dd>
+                    <dt>Plays as</dt>
+                    <dd>
+                        @(Model.WebCodec ?? "not processed yet")
+                        @if (Model.HqCodecs is not null)
+                        {
+                            <text>, with H.265 offered first where it plays</text>
+                        }
+                    </dd>
                 }
                 else
                 {
@@ -230,6 +238,30 @@
                     <dd class="text-break" style="color:var(--stamp)">@Model.ErrorMessage</dd>
                 }
             </dl>
+
+            @* Uploading the same file again with a different setting would do nothing at all - ingestion
+               dedups identical bytes and hands back the item that already exists - so without this the
+               conversion picker would be a one-shot choice with no way back. *@
+            @if (MediaKinds.Of(Model) == MediaKind.Video)
+            {
+                <form method="post" action="/dashboard/media/@Model.Id/convert" class="mb-3">
+                    @Html.AntiForgeryToken()
+                    <label class="form-label small mb-1" for="convert">Convert again</label>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <select name="profile" id="convert" class="form-select form-select-sm" style="max-width: 20rem;">
+                            @foreach (var p in ConversionProfiles.Choices)
+                            {
+                                <option value="@p" selected="@(p == Model.Profile)">@ConversionProfiles.Label(p)</option>
+                            }
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Convert</button>
+                    </div>
+                    <div class="form-text">Re-runs from the original, which is always kept. The share keeps playing
+                        what it has until the new version is ready.
+                    </div>
+                </form>
+            }
+
             <a href="/dashboard/media/@Model.Id/download" class="btn btn-sm btn-outline-primary">Download original</a>
 
             @if (isShare)

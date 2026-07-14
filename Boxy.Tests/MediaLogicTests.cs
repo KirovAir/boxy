@@ -154,6 +154,43 @@ public class MediaLogicTests
         Assert.IsFalse(ConversionProfiles.IsDerivedRendition("abc123-thumb.jpg"));
     }
 
+    [TestMethod]
+    public void ReprocessesWhatDoesNotMatchItsProfile()
+    {
+        // The bug that started all this: a published video still serving H.265 by default.
+        Assert.IsTrue(Needs(ConversionProfile.Best, "hevc", "h-h264.mp4".Replace("h-", "h"), "hevc", null));
+        // A legacy item from before the lanes were named, and one that was never processed at all.
+        Assert.IsTrue(Needs(ConversionProfile.Best, "h264", "h-web.mp4", "h264", null));
+        Assert.IsTrue(Needs(ConversionProfile.Universal, "hevc", null, null, null));
+
+        // An owner asked for a different conversion and the in-memory queue lost it to a restart.
+        Assert.IsTrue(Needs(ConversionProfile.FullSize, "hevc", "h-h264.mp4", "h264", null), "capped file on a full-size item");
+        Assert.IsTrue(Needs(ConversionProfile.AsUploaded, "hevc", "h-h264.mp4", "h264", null), "converted file on a don't-convert item");
+        Assert.IsTrue(Needs(ConversionProfile.Universal, "hevc", "h-h264.mp4", "h264", "h.mp4"), "H.265 still advertised after leaving Best");
+    }
+
+    [TestMethod]
+    public void ReprocessingSelfTerminates()
+    {
+        // Every settled shape must stop matching, or the worker re-probes the whole library on every boot
+        // - which is exactly what the predicate this replaced did to a faststart H.265 mp4, forever.
+        Assert.IsFalse(Needs(ConversionProfile.Best, "hevc", "h-h264.mp4", "h264", "h.mp4"), "Best: H.264 lane + H.265 rendition");
+        Assert.IsFalse(Needs(ConversionProfile.Best, "h264", null, "h264", null), "a clean H.264 upload, served untouched");
+        Assert.IsFalse(Needs(ConversionProfile.Universal, "vp9", "h-h264.mp4", "h264", null), "VP9 transcoded");
+        Assert.IsFalse(Needs(ConversionProfile.FullSize, "hevc", "h-h264-full.mp4", "h264", null), "full-size lane");
+        Assert.IsFalse(Needs(ConversionProfile.AsUploaded, "vp9", "h-asis.mp4", "vp9", null), "kept as uploaded, remuxed");
+        Assert.IsFalse(Needs(ConversionProfile.AsUploaded, "h264", null, "h264", null), "kept as uploaded, served raw");
+
+        // Not a video: never touched, whatever the columns say.
+        Assert.IsFalse(Needs(ConversionProfile.Best, null, null, null, null));
+    }
+
+    private static bool Needs(ConversionProfile profile, string? videoCodec, string? web, string? webCodec, string? hq)
+    {
+        return ConversionProfiles.NeedsReprocessing(
+            new ConversionProfiles.RenditionState(profile, "h", videoCodec, web, webCodec, hq));
+    }
+
     private static ProbeResult Probe(string codec, string pixFmt, string? profile, int? level, string? tag)
     {
         return new ProbeResult(1920, 1080, 10, codec, "aac", pixFmt, 10, null, null, profile, level, tag);

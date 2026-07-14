@@ -95,6 +95,35 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h6 mb-1">Video conversion</h2>
+        <p class="text-secondary small mb-3">What happens to videos dropped in this box. Whoever drops a file
+            isn't asked - they have no idea who'll end up watching it, and a drop-off is only ever seen by you.</p>
+        <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/conversion">
+            @Html.AntiForgeryToken()
+
+            <select name="profile" id="boxprofile" class="form-select form-select-sm mb-1" style="max-width: 24rem;">
+                <option value="" selected="@(Model.Bucket.DefaultProfile is null)">
+                    Use the site default (@ConversionProfiles.Label(Model.InstanceDefaultProfile))
+                </option>
+                @foreach (var p in ConversionProfiles.Choices)
+                {
+                    <option value="@p" selected="@(p == Model.Bucket.DefaultProfile)">@ConversionProfiles.Label(p)</option>
+                }
+            </select>
+            <div class="form-text mb-3">
+                Nothing dropped in a box is ever a public share, so
+                <span class="mono">@ConversionProfiles.Label(ConversionProfile.AsUploaded)</span> costs nothing and
+                finishes instantly. Pick <span class="mono">@ConversionProfiles.Label(ConversionProfile.Universal)</span>
+                if you preview these on a machine with no H.265 decoder.
+            </div>
+
+            <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
+    </div>
+</div>
+
 @{
     // "Filtered" means the list is narrowed by anything - a type chip or an uploader - so the empty
     // state, the download-all count, and the toolbar visibility all react to the uploader filter too.

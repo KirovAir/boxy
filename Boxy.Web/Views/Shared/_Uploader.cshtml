@@ -20,13 +20,24 @@
         <div class="up-title">@Model.Title</div>
         <div class="small">@Model.Hint</div>
     </label>
+    @* Always visible, never revealed on picking a video: upload.js starts the upload the moment a file
+       lands, so a control that appeared then would be frozen in the same tick it showed up. The value is
+       read at finalize instead, which also means it stays the uploader's to change while a big clip is
+       still on its way up. *@
     @if (Model.ConversionOption)
     {
-        <div class="form-check mb-3">
-            <input type="checkbox" name="profile" value="@ConversionProfile.AsUploaded" class="form-check-input"
-                   id="keepOriginal"/>
-            <label class="form-check-label" for="keepOriginal">@ConversionProfiles.Label(ConversionProfile.AsUploaded)</label>
-            <div class="form-text">@ConversionProfiles.Help(ConversionProfile.AsUploaded)</div>
+        <div class="mb-3">
+            <label class="form-label" for="profile">Video conversion</label>
+            <select name="profile" id="profile" class="form-select mb-1" style="max-width: 24rem;">
+                @foreach (var p in ConversionProfiles.Choices)
+                {
+                    <option value="@p" selected="@(p == Model.DefaultProfile)"
+                            data-help="@ConversionProfiles.Help(p)">@ConversionProfiles.Label(p)</option>
+                }
+            </select>
+            @* The cost of the option you are on stays in front of you, rather than being buried in docs. *@
+            <div class="form-text" id="profileHelp">@ConversionProfiles.Help(Model.DefaultProfile)</div>
+            <div class="form-text">Only videos are affected. Everything else is stored exactly as it came in.</div>
         </div>
     }
     <button type="submit" class="btn btn-primary">@Model.ButtonText</button>

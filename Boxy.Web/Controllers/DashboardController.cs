@@ -22,6 +22,7 @@ public class DashboardController(
     IBlobStore storage,
     MediaProcessor processor,
     VideoSettingsProvider videoSettings,
+    MediaProcessingQueue queue,
     IEmailSender emailSender,
     EmailComposer emailComposer,
     IConfiguration config,
@@ -82,6 +83,7 @@ public class DashboardController(
             OwnerUsername = me?.Username,
             OwnerIsAdmin = isAdmin,
             MaxUploadBytes = isAdmin ? 0L : settings.MaxUploadBytes,
+            DefaultProfile = (await videoSettings.GetEffectiveAsync(ct)).DefaultProfile,
             QuotaBytes = quotaBytes,
             UsageBytes = quotaBytes > 0 ? await QuotaService.UsageBytesAsync(db, UserId, ct) : 0
         });
@@ -216,8 +218,29 @@ public class DashboardController(
         {
             Bucket = bucket, Files = files, Filter = filter, KindCounts = kindCounts,
             ActiveUploader = resolved?.Identity,
-            BaseUrl = config.PublicBaseUrl(Request), OwnerEmail = ownerEmail
+            BaseUrl = config.PublicBaseUrl(Request), OwnerEmail = ownerEmail,
+            InstanceDefaultProfile = (await videoSettings.GetEffectiveAsync(ct)).DefaultProfile
         });
+    }
+
+    // Save what happens to videos dropped in this box. Null (the empty option) means "whatever the site
+    // default is at the time", which is deliberately not snapshotted: an admin changing the site default
+    // should move every box that hasn't made its own choice.
+    [HttpPost("buckets/{id:int}/conversion")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SetConversion(int id, string? profile, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var box = await db.Buckets.FirstOrDefaultAsync(b => b.Id == id && b.OwnerId == UserId, ct);
+        if (box is null)
+        {
+            return RedirectToAction(nameof(Bucket), new { id });
+        }
+
+        box.DefaultProfile = ConversionProfiles.Parse(profile);
+        await db.SaveChangesAsync(ct);
+        this.FlashSuccess("Saved. It applies to videos dropped in from now on.");
+        return RedirectToAction(nameof(Bucket), new { id });
     }
 
     /// <summary>Turn an uploader-chip <c>code</c> (a one-way hash, safe in a URL) back into the actual
@@ -1042,6 +1065,41 @@ public class DashboardController(
     {
         var at = email.IndexOf('@');
         return at > 0 && email.IndexOf('.', at) > at + 1 && !email.EndsWith('.');
+    }
+
+    // Re-run the conversion under a different profile. Needed because re-uploading the same file is a
+    // no-op: ingestion dedups on content and hands back the item that already exists, so without this the
+    // choice made at upload could never be taken back.
+    //
+    // The item stays Ready throughout, so the share keeps serving what it has for the whole re-encode and
+    // nothing goes dark. It goes in the backfill lane for the same reason: nobody is waiting on it, and it
+    // must not delay somebody's actual upload.
+    [HttpPost("media/{id:int}/convert")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ConvertMedia(int id, string? profile, CancellationToken ct)
+    {
+        if (ConversionProfiles.Parse(profile) is not { } chosen)
+        {
+            this.FlashError("Pick a conversion.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await OwnedMedia(db).FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (item is null)
+        {
+            return RedirectToAction(nameof(Index));
+        }
+
+        item.Profile = chosen;
+        // Clear the tombstone, so an item that failed under the previous profile is genuinely reconsidered
+        // rather than skipped as already-hopeless.
+        item.ErrorMessage = null;
+        await db.SaveChangesAsync(ct);
+        queue.EnqueueBackfill(item.Id);
+
+        this.FlashSuccess($"Converting again as “{ConversionProfiles.Label(chosen)}”. It keeps playing until the new version is ready.");
+        return RedirectToAction(nameof(Edit), new { id });
     }
 
     [HttpPost("media/{id:int}/delete")]

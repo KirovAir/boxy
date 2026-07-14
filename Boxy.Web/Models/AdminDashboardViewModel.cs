@@ -30,6 +30,9 @@ public class AdminDashboardViewModel
     /// <summary>Upload size cap for this user in bytes (0 = unlimited), for the uploader's pre-check.</summary>
     public required long MaxUploadBytes { get; init; }
 
+    /// <summary>What the upload picker starts on when the uploader doesn't touch it (the instance default).</summary>
+    public required ConversionProfile DefaultProfile { get; init; }
+
     /// <summary>This user's total storage quota in bytes (0 = unlimited; not shown when unlimited).</summary>
     public required long QuotaBytes { get; init; }
 

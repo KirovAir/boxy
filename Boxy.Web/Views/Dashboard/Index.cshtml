@@ -15,6 +15,7 @@
         Hint = "or click to browse. Any size, several at once",
         ButtonText = "Upload",
         ConversionOption = true,
+        DefaultProfile = Model.DefaultProfile,
         MaxBytes = Model.MaxUploadBytes
     };
 }
@@ -171,7 +172,12 @@ else
             <div class="film-grid">
                 @foreach (var m in Model.Videos.Items)
                 {
-                    <div class="film-card">
+                    @* The poll (upload.js) watches for these two attributes anywhere on the page, so a card
+                       that is still converting flips to its poster on its own. It matters more than it used
+                       to: an H.265 upload was a stream copy that finished in seconds, and is now a full
+                       encode that can run for minutes. *@
+                    <div class="film-card" data-slug="@m.Slug"
+                         data-status="@(m.Status == MediaStatus.Ready ? "ready" : m.Status == MediaStatus.Failed ? "failed" : "processing")">
                         <label class="film-card__select" title="Select"><input type="checkbox"
                                                                                class="bulk-check form-check-input"
                                                                                value="@m.Id" aria-label="Select share"/></label>

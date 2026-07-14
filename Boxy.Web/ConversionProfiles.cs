@@ -127,6 +127,67 @@ public static class ConversionProfiles
     private static readonly string[] RenditionSuffixes =
         ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix];
 
+    /// <summary>What an item currently has on disk, against what its profile says it should have. Just
+    /// enough columns to answer <see cref="NeedsReprocessing"/> without loading whole entities.</summary>
+    public readonly record struct RenditionState(
+        ConversionProfile Profile,
+        string ContentHash,
+        string? VideoCodec,
+        string? WebFileName,
+        string? WebCodec,
+        string? HqFileName);
+
+    /// <summary>
+    /// True when what an item actually has does not match what its profile asks for, so the worker should
+    /// run it again. Checked at startup against every Ready video, which is what makes a conversion
+    /// DURABLE: the request to convert lives in an in-memory queue, so a restart in the wrong moment would
+    /// otherwise drop it silently, leaving the item advertising a profile it is not serving. It also
+    /// recovers a worker that died half way through one.
+    ///
+    /// Every rule here has to be self-terminating - a successful pass must stop matching - or the item is
+    /// re-probed on every single boot forever. That was a real bug in the predicate this replaces.
+    ///
+    /// Deliberately NOT checked: whether a Best item that could have an H.265 rendition is missing one. We
+    /// cannot tell "this source has nothing to offer" apart from "the remux failed" without probing, so
+    /// the rule would not self-terminate. The cost of leaving it out is small and bounded: the video plays
+    /// for everyone either way, and the only loss is that an Apple viewer gets the H.264 copy instead of
+    /// the nicer original until someone hits Convert again.
+    /// </summary>
+    public static bool NeedsReprocessing(RenditionState state)
+    {
+        // Not a video, or never processed at all: nothing here applies (the Uploaded/Processing requeue
+        // deals with the latter).
+        if (state.VideoCodec is null)
+        {
+            return false;
+        }
+
+        // The one that matters: whatever we hand a browser by default has to be H.264. This is the whole
+        // fix, and it catches the legacy items whose default lane is still H.265, VP9, or a raw .mov.
+        if (state.Profile != ConversionProfile.AsUploaded && state.WebCodec != "h264")
+        {
+            return true;
+        }
+
+        // "Don't convert it" means exactly that, so what we serve must still be the source's own codec. If
+        // it isn't, this item was converted under some other profile and has not caught up.
+        if (state.Profile == ConversionProfile.AsUploaded && state.WebCodec != state.VideoCodec)
+        {
+            return true;
+        }
+
+        // The produced file came out of a different lane than the one the item is now on (a capped H.264
+        // file on an item since switched to full size, or a pre-rename {hash}-web.mp4).
+        if (state.WebFileName is not null && state.WebFileName != state.ContentHash + WebSuffix(state.Profile))
+        {
+            return true;
+        }
+
+        // A profile that offers no H.265 rendition is still carrying one, so it is being advertised to
+        // browsers that the owner no longer wants it advertised to.
+        return state.Profile != ConversionProfile.Best && state.HqFileName is not null;
+    }
+
     /// <summary>
     /// True when a blob name is something the worker DERIVED, rather than an uploaded original
     /// (<c>{hash}{ext}</c>) or a poster (<c>{hash}.jpg</c> / <c>{hash}-thumb.jpg</c>).
