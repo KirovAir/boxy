@@ -51,9 +51,10 @@ public sealed class UploadFinalizer(
     /// Comfortably inside any proxy's read timeout, and long enough that ordinary files never poll.</summary>
     public static readonly TimeSpan Grace = TimeSpan.FromSeconds(10);
 
-    private static readonly TimeSpan KeepResult = TimeSpan.FromMinutes(30);
-
     private readonly ConcurrentDictionary<string, Job> _jobs = new();
+
+    /// <summary>How long a finished result is kept around to be replayed, measured from when it finished.</summary>
+    public TimeSpan KeepResult { get; init; } = TimeSpan.FromMinutes(30);
 
     /// <summary>Start finalizing this upload, or join the run already under way for it. A completed,
     /// successful run is replayed rather than repeated.</summary>
@@ -89,11 +90,7 @@ public sealed class UploadFinalizer(
 
     private Job NewJob(string uploadId, Func<IServiceProvider, CancellationToken, Task<UploadOutcome>> work)
     {
-        // Lazy, because AddOrUpdate may call this factory more than once under contention and only the value
-        // that actually lands in the map is ever run - two assemblies of the same upload would fight.
-        return new Job(new Lazy<Task<UploadOutcome>>(
-            () => Task.Run(() => RunAsync(uploadId, work)),
-            LazyThreadSafetyMode.ExecutionAndPublication));
+        return new Job(() => Task.Run(() => RunAsync(uploadId, work)));
     }
 
     private async Task<UploadOutcome> RunAsync(string uploadId, Func<IServiceProvider, CancellationToken, Task<UploadOutcome>> work)
@@ -113,22 +110,48 @@ public sealed class UploadFinalizer(
         }
     }
 
+    // Results are kept for a while after they land. Measured from when the run *finished*, not when it
+    // started: a 50 GB assembly can itself outlast the retention window, and pruning on start time would
+    // throw its result away the instant it completed - so the client that came back for the answer would be
+    // told to upload the whole thing again, against parts that had already been cleaned up.
     private void Prune()
     {
         var cutoff = DateTime.UtcNow - KeepResult;
         foreach (var (id, job) in _jobs)
         {
-            if (job.StartedUtc < cutoff && job.Run.IsCompleted)
+            if (job.FinishedBefore(cutoff))
             {
                 _jobs.TryRemove(new KeyValuePair<string, Job>(id, job));
             }
         }
     }
 
-    private sealed record Job(Lazy<Task<UploadOutcome>> Lazy)
+    private sealed class Job
     {
-        public DateTime StartedUtc { get; } = DateTime.UtcNow;
-        public Task<UploadOutcome> Run => Lazy.Value;
+        // Lazy, because AddOrUpdate may call the factory more than once under contention and only the value
+        // that actually lands in the map is ever run - two assemblies of the same upload would fight over
+        // the same part files.
+        private readonly Lazy<Task<UploadOutcome>> _lazy;
+        private long _finishedTicks;
+
+        public Job(Func<Task<UploadOutcome>> start)
+        {
+            _lazy = new Lazy<Task<UploadOutcome>>(() =>
+            {
+                var run = start();
+                run.ContinueWith(_ => Volatile.Write(ref _finishedTicks, DateTime.UtcNow.Ticks),
+                    TaskContinuationOptions.ExecuteSynchronously);
+                return run;
+            }, LazyThreadSafetyMode.ExecutionAndPublication);
+        }
+
+        public Task<UploadOutcome> Run => _lazy.Value;
+
+        public bool FinishedBefore(DateTime cutoff)
+        {
+            var ticks = Volatile.Read(ref _finishedTicks);
+            return ticks != 0 && new DateTime(ticks, DateTimeKind.Utc) < cutoff;
+        }
     }
 }
 

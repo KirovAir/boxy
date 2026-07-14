@@ -17,11 +17,16 @@ public class UploadFinalizerTests
     [TestInitialize]
     public void Setup()
     {
+        _finalizer = NewFinalizer(TimeSpan.FromMinutes(30));
+    }
+
+    private static UploadFinalizer NewFinalizer(TimeSpan keepResult)
+    {
         var services = new ServiceCollection().BuildServiceProvider();
-        _finalizer = new UploadFinalizer(
+        return new UploadFinalizer(
             services.GetRequiredService<IServiceScopeFactory>(),
             new TestLifetime(),
-            NullLogger<UploadFinalizer>.Instance);
+            NullLogger<UploadFinalizer>.Instance) { KeepResult = keepResult };
     }
 
     [TestMethod]
@@ -111,6 +116,56 @@ public class UploadFinalizerTests
         gate.SetResult();
         await run;
         Assert.IsFalse(_finalizer.IsRunning("upload1"));
+    }
+
+    [TestMethod]
+    public async Task StartOrJoin_ReplaysASuccess_EvenWhenTheAssemblyOutlastedTheRetention()
+    {
+        // A 50 GB assembly can take longer than results are kept for. Retention has to run from when the job
+        // finished, not when it started, or the result is prunable the instant it lands: the client comes
+        // back for its answer, finds the job gone, and gets a fresh assembly run against parts that the
+        // finished run already deleted - a successful upload reported as a failure.
+        var finalizer = NewFinalizer(TimeSpan.FromMilliseconds(200));
+        var runs = 0;
+
+        Task<UploadOutcome> Start()
+        {
+            return finalizer.StartOrJoin("upload1", async (_, _) =>
+            {
+                Interlocked.Increment(ref runs);
+                await Task.Delay(500); // outlasts the retention window all by itself
+                return UploadOutcome.Done("abc", "clip");
+            });
+        }
+
+        var first = await Start();
+        var replayed = await Start();
+
+        Assert.AreEqual(1, runs, "the result must survive its own assembly taking longer than the retention");
+        Assert.AreEqual("abc", first.Slug);
+        Assert.AreEqual("abc", replayed.Slug);
+    }
+
+    [TestMethod]
+    public async Task StartOrJoin_EventuallyForgetsAFinishedUpload()
+    {
+        var finalizer = NewFinalizer(TimeSpan.FromMilliseconds(50));
+        var runs = 0;
+
+        Task<UploadOutcome> Start()
+        {
+            return finalizer.StartOrJoin("upload1", (_, _) =>
+            {
+                Interlocked.Increment(ref runs);
+                return Task.FromResult(UploadOutcome.Done("abc", "clip"));
+            });
+        }
+
+        await Start();
+        await Task.Delay(150); // past the retention window
+        await Start();
+
+        Assert.AreEqual(2, runs, "results are not kept forever");
     }
 
     [TestMethod]
