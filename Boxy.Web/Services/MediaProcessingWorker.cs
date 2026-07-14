@@ -173,6 +173,20 @@ public class MediaProcessingWorker(
         // the right preview (inline pdf/image/audio) or a download card from the file type.
         if (probe?.VideoCodec is null)
         {
+            // Except for one case: a file ffprobe can no longer read AT ALL, which we already knew to be a
+            // video (its codec is on the row from an earlier, working probe). Its bytes have gone bad. It
+            // leaves here Ready and serving what it has, which is right - but with nothing recorded, the
+            // reprocess scan would keep finding its renditions out of step with its profile, fail to fix
+            // them, and queue it again on every single boot. Leave a tombstone so it is asked once.
+            //
+            // Never for an unreadable NON-video: a zip or an odd document also probes as nothing, and those
+            // are perfectly fine as they are (their VideoCodec is null, so the scan ignores them anyway).
+            if (probe is null && item.VideoCodec is not null)
+            {
+                item.ErrorMessage = "The stored file can no longer be read as a video.";
+                logger.LogWarning("Video {Slug} could not be probed; leaving it as it was", item.Slug);
+            }
+
             item.Status = MediaStatus.Ready;
             await db.SaveChangesAsync(ct);
             logger.LogInformation("Processed {Slug} as a shareable file ({Ext})", item.Slug, item.Extension);
@@ -201,8 +215,12 @@ public class MediaProcessingWorker(
         }
 
         // Every lane rewrites both renditions from scratch, so a re-convert to a different profile can't
-        // leave the previous profile's rendition hanging around and being served.
-        var (previousWeb, previousHq) = (item.WebFileName, item.HqFileName);
+        // leave the previous profile's rendition hanging around and being served. All four columns are
+        // captured, not just the names: on a failed reprocess the item stays live and goes on serving these
+        // exact files, so putting the names back while leaving the codecs null would keep the H.265
+        // rendition on disk and in service but stop the share page from advertising it (it needs both), and
+        // report the default lane as never processed.
+        var previous = (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs);
         item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
 
         // "Don't convert it": ship exactly what was uploaded. Serve an already-faststart mp4 as-is, else
@@ -219,7 +237,7 @@ public class MediaProcessingWorker(
 
             // Either way the codec is the source's: that is the whole point of this profile.
             item.WebCodec = probe.VideoCodec;
-            await FinishAsync(db, item, previousWeb, previousHq, ct);
+            await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
             logger.LogInformation("Processed {Slug} as uploaded, codec {Codec} (remuxed={Remuxed})",
                 item.Slug, probe.VideoCodec, item.WebFileName is not null);
             return;
@@ -245,8 +263,7 @@ public class MediaProcessingWorker(
                 // Never take a live, published video offline because a reprocess failed - leave it serving
                 // what it already had rather than 404ing it, and record the reason so the heal doesn't
                 // retry this doomed item on every startup.
-                item.WebFileName = previousWeb;
-                item.HqFileName = previousHq;
+                (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs) = previous;
                 await FailAsync(db, item, "Could not produce a playable web version", healing, ct);
                 return;
             }
@@ -262,7 +279,7 @@ public class MediaProcessingWorker(
             await ProduceHqAsync(item, probe, originalPath, expectedDuration, ct);
         }
 
-        await FinishAsync(db, item, previousWeb, previousHq, ct);
+        await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
         logger.LogInformation("Processed {Slug}: {W}x{H}, servedAsIs={AsIs}, web={Web} ({WebCodec}), hq={Hq}",
             item.Slug, item.Width, item.Height, serveAsIs, item.WebFileName ?? "original", item.WebCodec,
             item.HqCodecs ?? "none");
