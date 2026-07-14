@@ -18,6 +18,7 @@ public class DashboardController(
     IDbContextFactory<AppDbContext> dbFactory,
     IngestionService ingestion,
     ChunkedUploadService chunked,
+    UploadFinalizer finalizer,
     IBlobStore storage,
     MediaProcessor processor,
     IEmailSender emailSender,
@@ -376,46 +377,76 @@ public class DashboardController(
         }
     }
 
+    // Assembly runs detached from this request - a multi-GB concatenate outlasts any proxy's read timeout -
+    // so this answers with the finished item, or a 202 the client polls on.
     [HttpPost("upload/complete")]
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> UploadComplete([FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name,
         [FromQuery] long size, [FromQuery] long chunkSize, [FromQuery] bool keepOriginal, CancellationToken ct)
     {
         var layout = new UploadLayout(size, chunkSize, total);
+        var expiry = await DefaultExpiryAsync(ct);
+        var maxBytes = await MaxUploadBytesAsync(ct);
+        var userId = UserId;
+
+        var run = finalizer.StartOrJoin(uploadId, (services, jobCt) => AssembleAsync(services,
+            async chunked => (MediaItem?)await chunked.CompleteAsync(uploadId, layout, name, null, true, null, userId, keepOriginal, expiry, maxBytes, userId, jobCt)));
+
+        return await UploadResults.AwaitOrAcceptAsync(run);
+    }
+
+    [HttpGet("upload/complete/status")]
+    [IgnoreAntiforgeryToken]
+    public IActionResult UploadCompleteStatus([FromQuery] string uploadId)
+    {
+        return UploadResults.Describe(finalizer.Find(uploadId));
+    }
+
+    // Runs the assembly and turns every way it can fail into something the client can act on. Any failure
+    // has already discarded the staged parts, so all of these are "start over" answers.
+    private async Task<UploadOutcome> AssembleAsync(IServiceProvider services, Func<ChunkedUploadService, Task<MediaItem?>> assemble)
+    {
         try
         {
-            var item = await chunked.CompleteAsync(uploadId, layout, name, null, true, null, UserId, keepOriginal, await DefaultExpiryAsync(ct), await MaxUploadBytesAsync(ct), UserId, ct);
-            return Json(new { slug = item.Slug, title = item.Title });
+            var item = await assemble(services.GetRequiredService<ChunkedUploadService>());
+            return item is null ? UploadOutcome.ItemGone() : UploadOutcome.Done(item.Slug, item.Title);
         }
         catch (UploadTooLargeException ex)
         {
-            return BadRequest(new { error = $"That file is over the {MbLabel(ex.MaxBytes)} upload limit." });
+            return UploadOutcome.Failed($"That file is over the {MbLabel(ex.MaxBytes)} upload limit.");
         }
         catch (QuotaExceededException)
         {
-            return BadRequest(new { error = "You're out of storage space. Delete something or ask an admin to raise your quota." });
+            return UploadOutcome.Failed("You're out of storage space. Delete something or ask an admin to raise your quota.");
         }
         catch (UploadIncompleteException ex)
         {
-            logger.LogWarning(ex, "Discarded incomplete upload {UploadId}", uploadId);
-            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
+            logger.LogWarning(ex, "Discarded incomplete upload");
+            return UploadOutcome.Failed("That upload didn't arrive intact. Please pick the file again.");
         }
         catch (ArgumentException)
         {
-            return BadRequest();
+            return UploadOutcome.Failed("That upload is no longer valid.");
         }
         catch (InvalidOperationException)
         {
-            return BadRequest(new { error = "Upload session not found.", restart = true });
+            return UploadOutcome.Failed("Upload session not found.");
         }
     }
 
+    // Refused once the assembly has started: pulling the parts out from under it would fail the upload the
+    // user is waiting on.
     [HttpPost("upload/abort")]
     [IgnoreAntiforgeryToken]
     public IActionResult UploadAbort([FromQuery] string uploadId)
     {
         try
         {
+            if (finalizer.IsRunning(uploadId))
+            {
+                return Conflict(new { error = "That upload is already being finished." });
+            }
+
             chunked.Abort(uploadId);
         }
         catch (ArgumentException)
@@ -884,32 +915,20 @@ public class DashboardController(
         }
 
         var layout = new UploadLayout(size, chunkSize, total);
-        try
-        {
-            var item = await chunked.CompleteReplaceAsync(uploadId, layout, name, id, await MaxUploadBytesAsync(ct), UserId, ct);
-            return item is null ? NotFound(new { error = "That item no longer exists." }) : Json(new { slug = item.Slug });
-        }
-        catch (UploadTooLargeException ex)
-        {
-            return BadRequest(new { error = $"That file is over the {MbLabel(ex.MaxBytes)} upload limit." });
-        }
-        catch (QuotaExceededException)
-        {
-            return BadRequest(new { error = "You're out of storage space. Delete something or ask an admin to raise your quota." });
-        }
-        catch (UploadIncompleteException ex)
-        {
-            logger.LogWarning(ex, "Discarded incomplete replace upload {UploadId} for item {Item}", uploadId, id);
-            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
-        }
-        catch (ArgumentException)
-        {
-            return BadRequest();
-        }
-        catch (InvalidOperationException)
-        {
-            return BadRequest(new { error = "Upload session not found." });
-        }
+        var maxBytes = await MaxUploadBytesAsync(ct);
+        var userId = UserId;
+
+        var run = finalizer.StartOrJoin(uploadId, (services, jobCt) => AssembleAsync(services,
+            chunked => chunked.CompleteReplaceAsync(uploadId, layout, name, id, maxBytes, userId, jobCt)));
+
+        return await UploadResults.AwaitOrAcceptAsync(run);
+    }
+
+    [HttpGet("media/{id:int}/replace/complete/status")]
+    [IgnoreAntiforgeryToken]
+    public IActionResult ReplaceCompleteStatus(int id, [FromQuery] string uploadId)
+    {
+        return UploadResults.Describe(finalizer.Find(uploadId));
     }
 
     // Email a published share's public link to one or more addresses (WeTransfer-style). Recipients need

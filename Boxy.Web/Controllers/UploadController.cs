@@ -18,6 +18,7 @@ public class UploadController(
     IDbContextFactory<AppDbContext> dbFactory,
     IngestionService ingestion,
     ChunkedUploadService chunked,
+    UploadFinalizer finalizer,
     IBlobStore storage,
     ILogger<UploadController> logger) : Controller
 {
@@ -142,10 +143,12 @@ public class UploadController(
         }
     }
 
-    // Finalize: assemble the parts, ingest, dedup, queue. Returns the new item's slug.
+    // Finalize: assemble the parts, ingest, dedup, queue. The assembly runs detached from this request (a
+    // multi-GB concatenate outlasts any proxy's patience), so this either answers with the finished item or
+    // hands back a 202 for the client to poll on.
     [HttpPost("/api/u/{slug}/complete")]
     public async Task<IActionResult> Complete(string slug, [FromQuery] string uploadId, [FromQuery] int total,
-        [FromQuery] string name, [FromQuery] long size, [FromQuery] long chunkSize, CancellationToken ct)
+        [FromQuery] string name, [FromQuery] long size, [FromQuery] long chunkSize)
     {
         var bucket = await FindBucketAsync(slug);
         if (bucket is null || !bucket.IsOpen)
@@ -155,42 +158,67 @@ public class UploadController(
 
         var token = GetOrCreateUploaderToken();
         var layout = new UploadLayout(size, chunkSize, total);
+        var maxBytes = await MaxUploadBytesAsync(bucket);
+        var (bucketId, ownerId) = (bucket.Id, bucket.OwnerId);
+
+        var run = finalizer.StartOrJoin(uploadId, (services, ct) => AssembleAsync(services,
+            chunked => chunked.CompleteAsync(uploadId, layout, name, bucketId, false, token, maxBytes: maxBytes, quotaOwnerId: ownerId, ct: ct)));
+
+        return await UploadResults.AwaitOrAcceptAsync(run);
+    }
+
+    // How an upload that's still being assembled is getting on.
+    [HttpGet("/api/u/{slug}/complete/status")]
+    public async Task<IActionResult> CompleteStatus(string slug, [FromQuery] string uploadId)
+    {
+        var bucket = await FindBucketAsync(slug);
+        return bucket is null || !bucket.IsOpen ? NotFound() : UploadResults.Describe(finalizer.Find(uploadId));
+    }
+
+    // Runs the assembly and turns every way it can fail into something the client can act on. Any failure
+    // has already discarded the staged parts, so all of these are "start over" answers.
+    private async Task<UploadOutcome> AssembleAsync(IServiceProvider services, Func<ChunkedUploadService, Task<MediaItem>> assemble)
+    {
         try
         {
-            var item = await chunked.CompleteAsync(uploadId, layout, name, bucket.Id, false, token, maxBytes: await MaxUploadBytesAsync(bucket), quotaOwnerId: bucket.OwnerId, ct: ct);
-            return Json(new { slug = item.Slug, title = item.Title });
+            var item = await assemble(services.GetRequiredService<ChunkedUploadService>());
+            return UploadOutcome.Done(item.Slug, item.Title);
         }
         catch (UploadTooLargeException ex)
         {
-            return BadRequest(new { error = $"That file is over the {ex.MaxBytes / 1024 / 1024} MB limit for this box." });
+            return UploadOutcome.Failed($"That file is over the {ex.MaxBytes / 1024 / 1024} MB limit for this box.");
         }
         catch (QuotaExceededException)
         {
-            return BadRequest(new { error = "This box is full - the owner is out of storage space." });
+            return UploadOutcome.Failed("This box is full - the owner is out of storage space.");
         }
         catch (UploadIncompleteException ex)
         {
-            // The staged parts don't add up to the file the client described. They're gone now, so tell the
-            // client to forget its resume state and send the file again from the start.
-            logger.LogWarning(ex, "Discarded incomplete upload {UploadId} into bucket {Bucket}", uploadId, bucket.Id);
-            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
+            logger.LogWarning(ex, "Discarded incomplete upload");
+            return UploadOutcome.Failed("That upload didn't arrive intact. Please pick the file again.");
         }
         catch (ArgumentException)
         {
-            return BadRequest();
+            return UploadOutcome.Failed("That upload is no longer valid.");
         }
         catch (InvalidOperationException)
         {
-            return BadRequest(new { error = "Upload session not found.", restart = true });
+            return UploadOutcome.Failed("Upload session not found.");
         }
     }
 
-    // Cancel an in-progress upload: discard its parts.
+    // Cancel an in-progress upload: discard its parts. Refused once the assembly has started, because
+    // deleting the parts out from under it would fail the upload the user is waiting on.
     [HttpPost("/api/u/{slug}/abort")]
     public IActionResult Abort(string slug, [FromQuery] string uploadId)
     {
         try
         {
+            if (finalizer.IsRunning(uploadId))
+            {
+                return Conflict(new { error = "That upload is already being finished." });
+            }
+
             chunked.Abort(uploadId);
         }
         catch (ArgumentException)

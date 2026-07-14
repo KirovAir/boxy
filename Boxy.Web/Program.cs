@@ -122,6 +122,8 @@ await builder.RunWithLoggingAsync(async b =>
     b.Services.AddSingleton<QuotaService>();
     b.Services.AddScoped<IngestionService>();
     b.Services.AddScoped<ChunkedUploadService>();
+    // Singleton: it holds the in-flight assemblies, which outlive the requests that started them.
+    b.Services.AddSingleton<UploadFinalizer>();
     b.Services.AddScoped<PartialRenderer>();
 
     // Email: settings resolve at send-time (admin edits in-app, else the "Email" config section), so

@@ -14,6 +14,7 @@
     var RETRIES = 8;
     var MAX_BACKOFF = 30000;
     var OFFLINE_WAIT = 15000;     // longest we sit waiting for an 'online' event before trying anyway
+    var POLL_MS = 2000;           // how often we ask whether a detached assembly has finished
 
     var chunkUrl = form.dataset.chunkUrl;
     var completeUrl = form.dataset.completeUrl;
@@ -520,45 +521,96 @@
         }
     }
 
+    // Ask the server to assemble the staged parts into the finished file.
+    //
+    // Concatenating and hashing a multi-GB file takes minutes, which is longer than a reverse proxy will
+    // hold a silent connection open, so the server does the work detached from the request and answers 202.
+    // From here that means: ask, then poll until it says done. Asking is idempotent - the server replays a
+    // finished result - so a lost answer just gets asked for again rather than re-uploading anything.
     function complete(job) {
-        return new Promise(function (resolve) {
-            if (job.cancelled) {
-                resolve();
-                return;
+        var keep = form.querySelector('input[name=keepOriginal]:checked') ? '&keepOriginal=true' : '';
+        var askUrl = completeUrl + '?uploadId=' + job.uploadId + '&total=' + job.total +
+            '&name=' + encodeURIComponent(job.file.name) + layoutQuery(job) + keep;
+        var pollUrl = completeUrl + '/status?uploadId=' + job.uploadId;
+
+        return ask(0);
+
+        function ask(tries) {
+            if (job.cancelled) return Promise.resolve();
+            return whenOnline()
+                .then(function () {
+                    return fetch(askUrl, {method: 'POST', headers: {'Accept': 'application/json'}});
+                })
+                .then(read)
+                .then(function (body) {
+                    return handle(body, function () {
+                        return poll(0);
+                    });
+                })
+                .catch(function () {
+                    return retryOr(tries, ask, 'Could not finish that upload.');
+                });
+        }
+
+        function poll(tries) {
+            if (job.cancelled) return Promise.resolve();
+            return delay(POLL_MS)
+                .then(whenOnline)
+                .then(function () {
+                    return fetch(pollUrl, {headers: {'Accept': 'application/json'}});
+                })
+                .then(read)
+                .then(function (body) {
+                    // 'unknown' means the server forgot the job (a restart). The parts are still staged, so
+                    // just ask for the assembly again.
+                    if (body.status === 'unknown') return ask(0);
+                    return handle(body, function () {
+                        return poll(0);
+                    });
+                })
+                .catch(function () {
+                    return retryOr(tries, poll, 'Could not finish that upload.');
+                });
+        }
+
+        function read(r) {
+            if (r.status === 202) return {status: 'assembling'};
+            if (!r.ok && isPermanent(r.status)) return {status: 'error', error: null, gone: true};
+            if (!r.ok) throw new Error('finalize http ' + r.status);
+            return r.json();
+        }
+
+        function handle(body, keepWaiting) {
+            if (body.status === 'assembling') return keepWaiting();
+            if (body.status === 'done') return succeed(body);
+            if (body.restart) restart(job);
+            return fail(body.error);
+        }
+
+        function retryOr(tries, again, message) {
+            if (job.cancelled) return Promise.resolve();
+            if (tries >= RETRIES) return fail(message);
+            return delay(backoffMs(tries)).then(function () {
+                return again(tries + 1);
+            });
+        }
+
+        function succeed(body) {
+            forgetUpload(job);   // done - drop the resume memory
+            job.sent = job.file.size;
+            job.state = 'done';
+            removeRow(job);
+            try {
+                onUploaded(body);
+            } catch (e) {
             }
-            var xhr = new XMLHttpRequest();
-            var keep = form.querySelector('input[name=keepOriginal]:checked') ? '&keepOriginal=true' : '';
-            xhr.open('POST', completeUrl + '?uploadId=' + job.uploadId + '&total=' + job.total +
-                '&name=' + encodeURIComponent(job.file.name) + layoutQuery(job) + keep);
-            xhr.onload = function () {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    forgetUpload(job);   // done - drop the resume memory
-                    job.sent = job.file.size;
-                    job.state = 'done';
-                    removeRow(job);
-                    try {
-                        onUploaded(JSON.parse(xhr.responseText), job.file.type);
-                    } catch (e) {
-                    }
-                } else {
-                    // The server rejected the staged parts and threw them away (a stale part from an older
-                    // build, say). Start the next attempt from a clean slate rather than resuming onto
-                    // parts that no longer exist.
-                    var body = errorOf(xhr);
-                    if (body.restart) restart(job);
-                    job.error = body.error || null;
-                    job.state = 'failed';
-                    updateJob(job);
-                }
-                resolve();
-            };
-            xhr.onerror = function () {
-                job.state = 'failed';
-                updateJob(job);
-                resolve();
-            };
-            xhr.send();
-        });
+        }
+
+        function fail(message) {
+            job.error = message || null;
+            job.state = 'failed';
+            updateJob(job);
+        }
     }
 
     // The JSON body of a failed upload response, or {} when there isn't one.
@@ -583,7 +635,9 @@
     }
 
     function cancel(job) {
-        if (job.state === 'done') return;
+        // Once the server is assembling, the upload is out of our hands: deleting its parts would fail the
+        // very file the user is waiting on. The server refuses the abort at that point too.
+        if (job.state === 'done' || job.state === 'finishing') return;
         job.cancelled = true;
         job.state = 'cancelled';
         job.xhrs.slice().forEach(function (x) {
@@ -681,7 +735,10 @@
             : job.state === 'uploading' && job.rate ? fmtRate(job.rate)
                 : '';
         var x = el.querySelector('.job-cancel');
-        if (x) x.title = job.state === 'failed' ? 'Dismiss' : 'Cancel';
+        if (x) {
+            x.hidden = job.state === 'finishing';   // nothing left to cancel once the server has the bytes
+            x.title = job.state === 'failed' ? 'Dismiss' : 'Cancel';
+        }
     }
 
     function removeRow(job) {
