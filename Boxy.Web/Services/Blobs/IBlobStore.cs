@@ -5,6 +5,45 @@ namespace Boxy.Web.Services;
 public record StoredFile(string Hash, long Size, bool Deduped);
 
 /// <summary>
+/// Where an ingest's bytes come from. A stream is copied into the store, which is what a plain form post
+/// has to do. A staged file is a local scratch file whose SHA-256 the caller already computed (the chunked
+/// uploader hashes while it concatenates the parts), so the store takes the file over whole - a rename on
+/// the filesystem backend - instead of making another full copy of it. On a multi-GB upload that is the
+/// difference between one extra pass over the bytes and three.
+/// </summary>
+public abstract record UploadSource
+{
+    public abstract Task<StoredFile> StoreAsync(IBlobStore store, string extension, CancellationToken ct);
+
+    public static UploadSource FromStream(Stream stream)
+    {
+        return new StreamUploadSource(stream);
+    }
+
+    /// <summary>A local scratch file the store may consume. It is gone once stored, either way.</summary>
+    public static UploadSource FromStagedFile(string path, string hash)
+    {
+        return new StagedFileUploadSource(path, hash);
+    }
+}
+
+public sealed record StreamUploadSource(Stream Stream) : UploadSource
+{
+    public override Task<StoredFile> StoreAsync(IBlobStore store, string extension, CancellationToken ct)
+    {
+        return store.SaveAsync(Stream, extension, ct);
+    }
+}
+
+public sealed record StagedFileUploadSource(string Path, string Hash) : UploadSource
+{
+    public override Task<StoredFile> StoreAsync(IBlobStore store, string extension, CancellationToken ct)
+    {
+        return store.SaveStagedAsync(Path, Hash, extension, ct);
+    }
+}
+
+/// <summary>
 /// A local, on-disk copy of a blob for tools that need a real file path (ffmpeg/ffprobe). For the
 /// filesystem backend this points at the blob itself and disposing is a no-op; for remote backends it is
 /// a temporary download that is deleted on dispose. Always use it in a <c>using</c>.
@@ -62,6 +101,15 @@ public interface IBlobStore
     /// <summary>Stores a stream's bytes content-addressed as <c>{hash}{extension}</c>, deduplicating
     /// against existing identical content.</summary>
     Task<StoredFile> SaveAsync(Stream source, string extension, CancellationToken ct = default);
+
+    /// <summary>
+    /// Stores an already-hashed local scratch file content-addressed as <c>{hash}{extension}</c>. The file
+    /// is consumed: moved into place on the filesystem backend, uploaded then deleted on a remote one. Use
+    /// this over <see cref="SaveAsync(Stream,string,CancellationToken)"/> whenever the bytes are already on
+    /// local disk and hashed, so a multi-GB file is not copied and re-read a second time.
+    /// <paramref name="hash"/> must be the lowercase hex SHA-256 of the file's bytes.
+    /// </summary>
+    Task<StoredFile> SaveStagedAsync(string localSourcePath, string hash, string extension, CancellationToken ct = default);
 
     /// <summary>Stores a local file's bytes under a specific name (for derived outputs like posters and
     /// web renditions). The source file may be consumed - do not reuse it afterwards.</summary>

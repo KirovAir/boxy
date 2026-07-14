@@ -22,7 +22,8 @@ public class DashboardController(
     MediaProcessor processor,
     IEmailSender emailSender,
     EmailComposer emailComposer,
-    IConfiguration config) : Controller
+    IConfiguration config,
+    ILogger<DashboardController> logger) : Controller
 {
     private const int VideoPageSize = 24;
     private const int FilePageSize = 20;
@@ -304,7 +305,7 @@ public class DashboardController(
             try
             {
                 await using var stream = file.OpenReadStream();
-                await ingestion.IngestAsync(stream, file.FileName, null, true, null, UserId, keepOriginal, expiry, maxBytes, UserId, ct);
+                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, null, true, null, UserId, keepOriginal, expiry, maxBytes, UserId, ct);
                 count++;
             }
             catch (QuotaExceededException)
@@ -359,14 +360,15 @@ public class DashboardController(
         }
     }
 
-    // Existing chunk indices for a resumed admin upload.
+    // Existing chunk indices for a resumed admin upload. A part only counts when its length matches the
+    // slot the client would put it in, so a stale part is re-sent rather than trusted.
     [HttpGet("upload/chunks")]
     [IgnoreAntiforgeryToken]
-    public IActionResult UploadChunks([FromQuery] string uploadId)
+    public IActionResult UploadChunks([FromQuery] string uploadId, [FromQuery] long size, [FromQuery] long chunkSize)
     {
         try
         {
-            return Json(new { have = chunked.ExistingChunks(uploadId) });
+            return Json(new { have = chunked.ExistingChunks(uploadId, size, chunkSize) });
         }
         catch (ArgumentException)
         {
@@ -376,11 +378,13 @@ public class DashboardController(
 
     [HttpPost("upload/complete")]
     [IgnoreAntiforgeryToken]
-    public async Task<IActionResult> UploadComplete([FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name, [FromQuery] bool keepOriginal, CancellationToken ct)
+    public async Task<IActionResult> UploadComplete([FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name,
+        [FromQuery] long size, [FromQuery] long chunkSize, [FromQuery] bool keepOriginal, CancellationToken ct)
     {
+        var layout = new UploadLayout(size, chunkSize, total);
         try
         {
-            var item = await chunked.CompleteAsync(uploadId, total, name, null, true, null, UserId, keepOriginal, await DefaultExpiryAsync(ct), await MaxUploadBytesAsync(ct), UserId, ct);
+            var item = await chunked.CompleteAsync(uploadId, layout, name, null, true, null, UserId, keepOriginal, await DefaultExpiryAsync(ct), await MaxUploadBytesAsync(ct), UserId, ct);
             return Json(new { slug = item.Slug, title = item.Title });
         }
         catch (UploadTooLargeException ex)
@@ -391,13 +395,18 @@ public class DashboardController(
         {
             return BadRequest(new { error = "You're out of storage space. Delete something or ask an admin to raise your quota." });
         }
+        catch (UploadIncompleteException ex)
+        {
+            logger.LogWarning(ex, "Discarded incomplete upload {UploadId}", uploadId);
+            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
+        }
         catch (ArgumentException)
         {
             return BadRequest();
         }
         catch (InvalidOperationException)
         {
-            return BadRequest(new { error = "Upload session not found." });
+            return BadRequest(new { error = "Upload session not found.", restart = true });
         }
     }
 
@@ -848,7 +857,7 @@ public class DashboardController(
         try
         {
             await using var stream = file.OpenReadStream();
-            await ingestion.ReplaceAsync(id, stream, file.FileName, maxBytes, UserId, ct);
+            await ingestion.ReplaceAsync(id, UploadSource.FromStream(stream), file.FileName, maxBytes, UserId, ct);
             this.FlashSuccess("File replaced. Processing the new version now.");
         }
         catch (QuotaExceededException)
@@ -863,7 +872,8 @@ public class DashboardController(
     // to assemble them into this existing item. Owner-checked; the chunk staging is item-agnostic.
     [HttpPost("media/{id:int}/replace/complete")]
     [IgnoreAntiforgeryToken]
-    public async Task<IActionResult> ReplaceComplete(int id, [FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name, CancellationToken ct)
+    public async Task<IActionResult> ReplaceComplete(int id, [FromQuery] string uploadId, [FromQuery] int total,
+        [FromQuery] string name, [FromQuery] long size, [FromQuery] long chunkSize, CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         if (!await OwnedMedia(db).AnyAsync(m => m.Id == id, ct))
@@ -873,9 +883,10 @@ public class DashboardController(
             return NotFound(new { error = "That item no longer exists." });
         }
 
+        var layout = new UploadLayout(size, chunkSize, total);
         try
         {
-            var item = await chunked.CompleteReplaceAsync(uploadId, total, name, id, await MaxUploadBytesAsync(ct), UserId, ct);
+            var item = await chunked.CompleteReplaceAsync(uploadId, layout, name, id, await MaxUploadBytesAsync(ct), UserId, ct);
             return item is null ? NotFound(new { error = "That item no longer exists." }) : Json(new { slug = item.Slug });
         }
         catch (UploadTooLargeException ex)
@@ -885,6 +896,11 @@ public class DashboardController(
         catch (QuotaExceededException)
         {
             return BadRequest(new { error = "You're out of storage space. Delete something or ask an admin to raise your quota." });
+        }
+        catch (UploadIncompleteException ex)
+        {
+            logger.LogWarning(ex, "Discarded incomplete replace upload {UploadId} for item {Item}", uploadId, id);
+            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
         }
         catch (ArgumentException)
         {

@@ -1,26 +1,56 @@
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Boxy.Data.Entities;
 
 namespace Boxy.Web.Services;
 
+/// <summary>Thrown when the staged parts don't add up to the file the client says it sent (a missing part,
+/// or one whose length doesn't match its slot). The parts are discarded, so the client must start over.</summary>
+public class UploadIncompleteException(string reason) : Exception(reason);
+
 /// <summary>
 /// Reliable, parallel large-file uploads. The client splits a file into fixed-size chunks and
 /// uploads several at once; each chunk is stored as its own part file under a per-upload folder,
 /// so chunks may arrive out of order and a dropped one is simply re-sent. On completion the parts
-/// are concatenated in order and handed to <see cref="IngestionService"/> (hash/dedup/store/queue).
+/// are concatenated in order - hashed in the same pass - and the assembled file is handed to
+/// <see cref="IngestionService"/>, which takes it over rather than copying it again.
 /// Built for multi-GB uploads over flaky/mobile links.
+///
+/// The client declares the file's total size and its chunk size, which pins down exactly how long every
+/// part must be. Parts that don't match their slot are never counted as present (so a resume re-sends
+/// them) and never assembled, which is what stops a stale part - say from a build with a different chunk
+/// size - being spliced into a file it doesn't belong to.
 /// </summary>
 public partial class ChunkedUploadService(
     IBlobStore storage,
     IngestionService ingestion,
     ILogger<ChunkedUploadService> logger)
 {
+    // 1 MB copy buffer: the default 80 KB makes a needless number of syscalls over a multi-GB file.
+    private const int CopyBuffer = 1024 * 1024;
+
     [GeneratedRegex("^[a-zA-Z0-9]{8,64}$")]
     private static partial Regex UploadIdPattern();
 
+    /// <summary>The exact byte length part <paramref name="index"/> must have for a file of
+    /// <paramref name="size"/> bytes cut into <paramref name="chunkSize"/> pieces, or -1 when the index
+    /// falls outside the file.</summary>
+    public static long ExpectedChunkLength(int index, long size, long chunkSize)
+    {
+        if (index < 0 || size <= 0 || chunkSize <= 0)
+        {
+            return -1;
+        }
+
+        var start = (long)index * chunkSize;
+        return start >= size ? -1 : Math.Min(chunkSize, size - start);
+    }
+
     /// <summary>Store one chunk (by index) as its own part file. Idempotent - a retry overwrites it.
-    /// The chunk is written to a <c>.part</c> temp and atomically moved into place, so an interrupted
-    /// write never leaves a truncated part that a resume would mistake for a complete one.</summary>
+    /// The chunk is written to a private temp and atomically moved into place, so an interrupted write
+    /// never leaves a truncated part that a resume would mistake for a complete one. The temp name is
+    /// unique per attempt, so two concurrent writes of the same index (two tabs, or a retry racing a
+    /// request the server is still reading) can't clobber each other's file.</summary>
     public async Task WriteChunkAsync(string uploadId, int index, Stream chunk, long maxBytes = 0, CancellationToken ct = default)
     {
         if (index < 0)
@@ -31,12 +61,12 @@ public partial class ChunkedUploadService(
         var dir = PartDir(uploadId);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, index.ToString());
-        var tmp = path + ".part";
+        var tmp = Path.Combine(dir, $"{index}.{Guid.NewGuid():N}.part");
         try
         {
-            await using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            await using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true))
             {
-                await chunk.CopyToAsync(fs, ct);
+                await chunk.CopyToAsync(fs, CopyBuffer, ct);
             }
 
             File.Move(tmp, path, true);
@@ -71,12 +101,13 @@ public partial class ChunkedUploadService(
     }
 
     /// <summary>The chunk indices already fully stored for this upload, so the client can resume an
-    /// interrupted upload by sending only what's missing. Half-written <c>.part</c> temps don't parse
-    /// as an index and are never reported.</summary>
-    public IReadOnlyList<int> ExistingChunks(string uploadId)
+    /// interrupted upload by sending only what's missing. A part is only reported when its length is
+    /// exactly what that slot needs, so a half-written temp, or a part left over from a build that cut the
+    /// file differently, is re-sent rather than trusted.</summary>
+    public IReadOnlyList<int> ExistingChunks(string uploadId, long size, long chunkSize)
     {
         var dir = PartDir(uploadId); // validates the id
-        if (!Directory.Exists(dir))
+        if (!Directory.Exists(dir) || size <= 0 || chunkSize <= 0)
         {
             return [];
         }
@@ -84,7 +115,8 @@ public partial class ChunkedUploadService(
         var indices = new List<int>();
         foreach (var file in Directory.EnumerateFiles(dir))
         {
-            if (int.TryParse(Path.GetFileName(file), out var idx) && idx >= 0)
+            if (int.TryParse(Path.GetFileName(file), out var idx)
+                && new FileInfo(file).Length == ExpectedChunkLength(idx, size, chunkSize))
             {
                 indices.Add(idx);
             }
@@ -93,11 +125,10 @@ public partial class ChunkedUploadService(
         return indices;
     }
 
-    /// <summary>Concatenate parts 0..total-1 in order and ingest them as a new item. Cleans up parts
-    /// either way.</summary>
+    /// <summary>Concatenate the parts in order and ingest them as a new item. Cleans up parts either way.</summary>
     public Task<MediaItem> CompleteAsync(
         string uploadId,
-        int total,
+        UploadLayout layout,
         string fileName,
         int? bucketId,
         bool published,
@@ -109,7 +140,7 @@ public partial class ChunkedUploadService(
         int? quotaOwnerId = null,
         CancellationToken ct = default)
     {
-        return AssembleAndUseAsync(uploadId, total,
+        return AssembleAndUseAsync(uploadId, layout,
             assembled => ingestion.IngestAsync(assembled, fileName, bucketId, published, uploaderToken, ownerId, keepOriginal, expiresAt, maxBytes, quotaOwnerId, ct),
             ct);
     }
@@ -117,49 +148,80 @@ public partial class ChunkedUploadService(
     /// <summary>Same assembly as <see cref="CompleteAsync"/>, but swaps the bytes into an existing item
     /// (keeping its slug, URL, and stats) instead of creating a new one. Returns null if the item is
     /// gone. Authorization is the caller's job.</summary>
-    public Task<MediaItem?> CompleteReplaceAsync(string uploadId, int total, string fileName, int itemId, long maxBytes = 0, int? quotaOwnerId = null, CancellationToken ct = default)
+    public Task<MediaItem?> CompleteReplaceAsync(string uploadId, UploadLayout layout, string fileName, int itemId, long maxBytes = 0, int? quotaOwnerId = null, CancellationToken ct = default)
     {
-        return AssembleAndUseAsync(uploadId, total,
+        return AssembleAndUseAsync(uploadId, layout,
             assembled => ingestion.ReplaceAsync(itemId, assembled, fileName, maxBytes, quotaOwnerId, ct),
             ct);
     }
 
-    /// <summary>Concatenate parts 0..total-1 in order into one stream, hand it to <paramref name="use"/>,
-    /// then clean up the parts and the combined file regardless of outcome.</summary>
-    private async Task<T> AssembleAndUseAsync<T>(string uploadId, int total, Func<Stream, Task<T>> use, CancellationToken ct)
+    /// <summary>
+    /// Concatenate the parts in order into one file, hashing as we go so the bytes are read once and not
+    /// again, hand it to <paramref name="use"/> as a staged file (the store moves it into place rather
+    /// than copying it), then clean up regardless of outcome.
+    /// </summary>
+    private async Task<T> AssembleAndUseAsync<T>(string uploadId, UploadLayout layout, Func<UploadSource, Task<T>> use, CancellationToken ct)
     {
         var dir = PartDir(uploadId);
-        if (total <= 0 || !Directory.Exists(dir))
+        if (!Directory.Exists(dir))
         {
             throw new InvalidOperationException($"No upload in progress for id {uploadId}");
+        }
+
+        if (!layout.IsValid)
+        {
+            throw new UploadIncompleteException($"Upload {uploadId} declared an impossible layout ({layout})");
         }
 
         var combined = dir + ".combined";
         try
         {
-            await using (var outFs = new FileStream(combined, FileMode.Create, FileAccess.Write, FileShare.None))
-            {
-                for (var i = 0; i < total; i++)
-                {
-                    var part = Path.Combine(dir, i.ToString());
-                    if (!File.Exists(part))
-                    {
-                        throw new InvalidOperationException($"Missing chunk {i} for upload {uploadId}");
-                    }
-
-                    await using var inFs = new FileStream(part, FileMode.Open, FileAccess.Read, FileShare.None);
-                    await inFs.CopyToAsync(outFs, ct);
-                }
-            }
-
-            await using var assembled = new FileStream(combined, FileMode.Open, FileAccess.Read, FileShare.None);
-            return await use(assembled);
+            var hash = await ConcatenateAsync(dir, uploadId, layout, combined, ct);
+            return await use(UploadSource.FromStagedFile(combined, hash));
         }
         finally
         {
+            // The store consumes the assembled file on success, so this only bites when something failed.
             TryDeleteFile(combined);
             TryDeleteDir(dir);
         }
+    }
+
+    /// <summary>Writes parts 0..n-1 into <paramref name="combined"/> and returns the SHA-256 of the result,
+    /// computed in the same pass. Throws if any part is missing or the wrong length for its slot.</summary>
+    private async Task<string> ConcatenateAsync(string dir, string uploadId, UploadLayout layout, string combined, CancellationToken ct)
+    {
+        using var sha = SHA256.Create();
+        await using (var outFs = new FileStream(combined, FileMode.Create, FileAccess.Write, FileShare.None, CopyBuffer, useAsync: true))
+        {
+            await using var hashing = new CryptoStream(outFs, sha, CryptoStreamMode.Write, leaveOpen: true);
+            for (var i = 0; i < layout.Total; i++)
+            {
+                var part = new FileInfo(Path.Combine(dir, i.ToString()));
+                var expected = ExpectedChunkLength(i, layout.Size, layout.ChunkSize);
+                if (!part.Exists)
+                {
+                    throw new UploadIncompleteException($"Upload {uploadId} is missing chunk {i}");
+                }
+
+                if (part.Length != expected)
+                {
+                    throw new UploadIncompleteException(
+                        $"Upload {uploadId} chunk {i} is {part.Length} bytes, expected {expected}");
+                }
+
+                await using var inFs = new FileStream(part.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBuffer, useAsync: true);
+                await inFs.CopyToAsync(hashing, CopyBuffer, ct);
+            }
+        }
+
+        var size = new FileInfo(combined).Length;
+        if (size != layout.Size)
+        {
+            throw new UploadIncompleteException($"Upload {uploadId} assembled to {size} bytes, expected {layout.Size}");
+        }
+
+        return Convert.ToHexStringLower(sha.Hash!);
     }
 
     public void Abort(string uploadId)
@@ -208,5 +270,22 @@ public partial class ChunkedUploadService(
         {
             logger.LogWarning(ex, "Failed to delete upload dir {Dir}", dir);
         }
+    }
+}
+
+/// <summary>
+/// How the client cut the file up: its total byte size, the chunk size it used, and how many parts that
+/// makes. The three have to agree, which is what <see cref="IsValid"/> checks - it means the server can
+/// derive the exact length of every part instead of taking the client's word for what arrived.
+/// </summary>
+public readonly record struct UploadLayout(long Size, long ChunkSize, int Total)
+{
+    public bool IsValid =>
+        Size > 0 && ChunkSize > 0 && Total > 0
+        && Total == (Size + ChunkSize - 1) / ChunkSize;
+
+    public override string ToString()
+    {
+        return $"size={Size} chunk={ChunkSize} total={Total}";
     }
 }

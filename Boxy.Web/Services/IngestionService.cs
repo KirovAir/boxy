@@ -21,7 +21,7 @@ public class IngestionService(
     ILogger<IngestionService> logger)
 {
     public async Task<MediaItem> IngestAsync(
-        Stream fileStream,
+        UploadSource source,
         string originalFileName,
         int? bucketId,
         bool published,
@@ -34,7 +34,7 @@ public class IngestionService(
         CancellationToken ct = default)
     {
         var extension = Path.GetExtension(originalFileName).ToLowerInvariant();
-        var stored = await storage.SaveAsync(fileStream, extension, ct);
+        var stored = await source.StoreAsync(storage, extension, ct);
         await EnforceSizeLimitAsync(stored, extension, maxBytes, ct);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -102,10 +102,10 @@ public class IngestionService(
     /// dedup-safely, and the item is re-queued for probe/poster/transcode. Returns null if the item is
     /// gone. Authorization is the caller's job.
     /// </summary>
-    public async Task<MediaItem?> ReplaceAsync(int itemId, Stream fileStream, string originalFileName, long maxBytes = 0, int? quotaOwnerId = null, CancellationToken ct = default)
+    public async Task<MediaItem?> ReplaceAsync(int itemId, UploadSource source, string originalFileName, long maxBytes = 0, int? quotaOwnerId = null, CancellationToken ct = default)
     {
         var extension = Path.GetExtension(originalFileName).ToLowerInvariant();
-        var stored = await storage.SaveAsync(fileStream, extension, ct);
+        var stored = await source.StoreAsync(storage, extension, ct);
         await EnforceSizeLimitAsync(stored, extension, maxBytes, ct);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);

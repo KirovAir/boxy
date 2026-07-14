@@ -77,7 +77,7 @@ public class UploadController(
             try
             {
                 await using var stream = file.OpenReadStream();
-                await ingestion.IngestAsync(stream, file.FileName, bucket.Id, false, token, maxBytes: maxBytes, quotaOwnerId: bucket.OwnerId, ct: ct);
+                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, bucket.Id, false, token, maxBytes: maxBytes, quotaOwnerId: bucket.OwnerId, ct: ct);
                 count++;
             }
             catch (QuotaExceededException)
@@ -121,9 +121,10 @@ public class UploadController(
     }
 
     // Which chunk indices are already stored - lets the client resume an interrupted upload by
-    // re-sending only the missing chunks.
+    // re-sending only the missing chunks. The size/chunkSize the client is working to are required, so a
+    // part is only ever reported as present when its length matches the slot the client would put it in.
     [HttpGet("/api/u/{slug}/chunks")]
-    public async Task<IActionResult> Chunks(string slug, [FromQuery] string uploadId)
+    public async Task<IActionResult> Chunks(string slug, [FromQuery] string uploadId, [FromQuery] long size, [FromQuery] long chunkSize)
     {
         var bucket = await FindBucketAsync(slug);
         if (bucket is null || !bucket.IsOpen)
@@ -133,7 +134,7 @@ public class UploadController(
 
         try
         {
-            return Json(new { have = chunked.ExistingChunks(uploadId) });
+            return Json(new { have = chunked.ExistingChunks(uploadId, size, chunkSize) });
         }
         catch (ArgumentException)
         {
@@ -141,9 +142,10 @@ public class UploadController(
         }
     }
 
-    // Finalize: assemble parts 0..total-1, ingest, dedup, queue. Returns the new item's slug.
+    // Finalize: assemble the parts, ingest, dedup, queue. Returns the new item's slug.
     [HttpPost("/api/u/{slug}/complete")]
-    public async Task<IActionResult> Complete(string slug, [FromQuery] string uploadId, [FromQuery] int total, [FromQuery] string name, CancellationToken ct)
+    public async Task<IActionResult> Complete(string slug, [FromQuery] string uploadId, [FromQuery] int total,
+        [FromQuery] string name, [FromQuery] long size, [FromQuery] long chunkSize, CancellationToken ct)
     {
         var bucket = await FindBucketAsync(slug);
         if (bucket is null || !bucket.IsOpen)
@@ -152,9 +154,10 @@ public class UploadController(
         }
 
         var token = GetOrCreateUploaderToken();
+        var layout = new UploadLayout(size, chunkSize, total);
         try
         {
-            var item = await chunked.CompleteAsync(uploadId, total, name, bucket.Id, false, token, maxBytes: await MaxUploadBytesAsync(bucket), quotaOwnerId: bucket.OwnerId, ct: ct);
+            var item = await chunked.CompleteAsync(uploadId, layout, name, bucket.Id, false, token, maxBytes: await MaxUploadBytesAsync(bucket), quotaOwnerId: bucket.OwnerId, ct: ct);
             return Json(new { slug = item.Slug, title = item.Title });
         }
         catch (UploadTooLargeException ex)
@@ -165,13 +168,20 @@ public class UploadController(
         {
             return BadRequest(new { error = "This box is full - the owner is out of storage space." });
         }
+        catch (UploadIncompleteException ex)
+        {
+            // The staged parts don't add up to the file the client described. They're gone now, so tell the
+            // client to forget its resume state and send the file again from the start.
+            logger.LogWarning(ex, "Discarded incomplete upload {UploadId} into bucket {Bucket}", uploadId, bucket.Id);
+            return BadRequest(new { error = "That upload didn't arrive intact. Please pick the file again.", restart = true });
+        }
         catch (ArgumentException)
         {
             return BadRequest();
         }
         catch (InvalidOperationException)
         {
-            return BadRequest(new { error = "Upload session not found." });
+            return BadRequest(new { error = "Upload session not found.", restart = true });
         }
     }
 

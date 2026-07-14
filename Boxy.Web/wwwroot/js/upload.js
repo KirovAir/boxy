@@ -204,8 +204,15 @@
         return out;
     }
 
-    function fetchExisting(uploadId) {
-        return fetch(chunksUrl + '?uploadId=' + encodeURIComponent(uploadId), {headers: {'Accept': 'application/json'}})
+    // The server needs the exact layout we cut the file into, so it can check every stored part is the
+    // right length for its slot before reporting it back as one we can skip.
+    function layoutQuery(job) {
+        return '&size=' + job.file.size + '&chunkSize=' + CHUNK;
+    }
+
+    function fetchExisting(job) {
+        return fetch(chunksUrl + '?uploadId=' + encodeURIComponent(job.uploadId) + layoutQuery(job),
+            {headers: {'Accept': 'application/json'}})
             .then(function (r) {
                 return r.ok ? r.json() : {have: []};
             })
@@ -315,7 +322,7 @@
             }
 
             if (job.resume) {
-                fetchExisting(job.uploadId).then(function (list) {
+                fetchExisting(job).then(function (list) {
                     list.forEach(function (idx) {
                         if (idx >= 0 && idx < job.total) {
                             have[idx] = true;
@@ -450,7 +457,8 @@
             }
             var xhr = new XMLHttpRequest();
             var keep = form.querySelector('input[name=keepOriginal]:checked') ? '&keepOriginal=true' : '';
-            xhr.open('POST', completeUrl + '?uploadId=' + job.uploadId + '&total=' + job.total + '&name=' + encodeURIComponent(job.file.name) + keep);
+            xhr.open('POST', completeUrl + '?uploadId=' + job.uploadId + '&total=' + job.total +
+                '&name=' + encodeURIComponent(job.file.name) + layoutQuery(job) + keep);
             xhr.onload = function () {
                 if (xhr.status >= 200 && xhr.status < 300) {
                     forgetUpload(job);   // done - drop the resume memory
@@ -462,6 +470,10 @@
                     } catch (e) {
                     }
                 } else {
+                    // The server rejected the staged parts and threw them away (a stale part from an older
+                    // build, say). Start the next attempt from a clean slate rather than resuming onto
+                    // parts that no longer exist.
+                    if (errorOf(xhr).restart) restart(job);
                     job.state = 'failed';
                     updateJob(job);
                 }
@@ -474,6 +486,25 @@
             };
             xhr.send();
         });
+    }
+
+    // The JSON body of a failed upload response, or {} when there isn't one.
+    function errorOf(xhr) {
+        try {
+            return JSON.parse(xhr.responseText) || {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    // Throw away everything we know about this job's server-side parts and give it a fresh upload id, so
+    // the next attempt re-sends the whole file instead of resuming onto parts the server has discarded.
+    function restart(job) {
+        forgetUpload(job);
+        job.uploadId = randomId();
+        job.resume = false;
+        job.loaded = {};
+        job.sent = 0;
     }
 
     function cancel(job) {

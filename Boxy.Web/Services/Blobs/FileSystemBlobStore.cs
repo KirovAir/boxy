@@ -90,6 +90,34 @@ public class FileSystemBlobStore(IConfiguration config, IWebHostEnvironment env,
         }
     }
 
+    /// <summary>
+    /// Takes over an already-hashed scratch file: the scratch area lives under the storage root, so this is
+    /// a rename rather than a copy, and a multi-GB upload costs no extra pass over its bytes.
+    /// </summary>
+    public Task<StoredFile> SaveStagedAsync(string localSourcePath, string hash, string extension, CancellationToken ct = default)
+    {
+        var size = new FileInfo(localSourcePath).Length;
+        var target = Path.Combine(Root, hash + extension);
+
+        if (File.Exists(target))
+        {
+            TryDeletePath(localSourcePath);
+            return Task.FromResult(new StoredFile(hash, size, true));
+        }
+
+        try
+        {
+            File.Move(localSourcePath, target);
+            return Task.FromResult(new StoredFile(hash, size, false));
+        }
+        catch (IOException) when (File.Exists(target))
+        {
+            // Race: another upload of identical content landed first. Same bytes, so it's a dedup hit.
+            TryDeletePath(localSourcePath);
+            return Task.FromResult(new StoredFile(hash, size, true));
+        }
+    }
+
     public Task PutAsync(string fileName, string localSourcePath, CancellationToken ct = default)
     {
         var target = ResolvePath(fileName);

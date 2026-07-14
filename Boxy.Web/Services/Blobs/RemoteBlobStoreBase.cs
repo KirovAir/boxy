@@ -73,6 +73,31 @@ public abstract class RemoteBlobStoreBase(string scratchRoot, ILogger logger) : 
         }
     }
 
+    /// <summary>
+    /// Uploads an already-hashed scratch file straight from disk, skipping the staging copy (and second
+    /// read) that <see cref="SaveAsync(Stream,string,CancellationToken)"/> needs to hash a stream. The
+    /// source file is deleted either way.
+    /// </summary>
+    public async Task<StoredFile> SaveStagedAsync(string localSourcePath, string hash, string extension, CancellationToken ct = default)
+    {
+        try
+        {
+            var size = new FileInfo(localSourcePath).Length;
+            var name = hash + extension;
+            if (await ExistsAsync(name, ct))
+            {
+                return new StoredFile(hash, size, true);
+            }
+
+            await UploadAsync(name, localSourcePath, ct);
+            return new StoredFile(hash, size, false);
+        }
+        finally
+        {
+            TryDeleteLocal(localSourcePath);
+        }
+    }
+
     public Task PutAsync(string fileName, string localSourcePath, CancellationToken ct = default)
     {
         return UploadAsync(fileName, localSourcePath, ct);
