@@ -19,6 +19,7 @@ public class SettingsController(
     IConfiguration config,
     EmailSettingsProvider emailProvider,
     VideoSettingsProvider videoProvider,
+    FfmpegCapabilities capabilities,
     IEmailSender emailSender) : Controller
 {
     [HttpGet("")]
@@ -138,6 +139,10 @@ public class SettingsController(
             Preset = s.Preset,
             MaxrateKbps = s.MaxrateKbps,
             DefaultProfile = s.DefaultProfile,
+            Encoder = s.Encoder,
+            GpuAvailable = capabilities.CanEncodeOnGpu,
+            GpuUnavailableReason = capabilities.GpuUnavailableReason,
+            CanToneMap = capabilities.CanToneMap,
             FromDb = fromDb
         });
     }
@@ -145,7 +150,7 @@ public class SettingsController(
     [HttpPost("video")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Video(int crf, int maxLongEdge, string? preset, int maxrateKbps,
-        string? defaultProfile, CancellationToken ct)
+        string? defaultProfile, string? encoder, CancellationToken ct)
     {
         // Settings are stored as one JSON blob, so a field the form doesn't send is not "unchanged", it is
         // gone: build the new value from the stored one rather than from nothing.
@@ -159,7 +164,12 @@ public class SettingsController(
             MaxLongEdge = maxLongEdge,
             Preset = preset ?? "",
             MaxrateKbps = maxrateKbps,
-            DefaultProfile = ConversionProfiles.Parse(defaultProfile) ?? current.DefaultProfile
+            DefaultProfile = ConversionProfiles.Parse(defaultProfile) ?? current.DefaultProfile,
+            // An enum off a form, so it is parsed against the defined members and never trusted; anything
+            // else keeps what is stored. Normalized() checks it again on the way into the DB.
+            Encoder = Enum.TryParse<VideoEncoder>(encoder, true, out var chosen) && Enum.IsDefined(chosen)
+                ? chosen
+                : current.Encoder
         }, ct);
 
         this.FlashSuccess("Video settings saved. They apply to videos uploaded from now on.");

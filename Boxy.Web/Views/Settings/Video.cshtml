@@ -63,6 +63,38 @@
                 older phones and TVs will play.
             </div>
 
+            <label class="form-label" for="encoder">Encoder</label>
+            <select name="encoder" id="encoder" class="form-select mb-1" style="max-width: 24rem;">
+                <option value="@VideoEncoder.Software" selected="@(Model.Encoder == VideoEncoder.Software)">
+                    Software (CPU)
+                </option>
+                <option value="@VideoEncoder.Hardware" selected="@(Model.Encoder == VideoEncoder.Hardware)"
+                        disabled="@(!Model.GpuAvailable)">
+                    Hardware (GPU)@(Model.GpuAvailable ? "" : " - not available on this server")
+                </option>
+            </select>
+            <div class="form-text mb-4">
+                @if (Model.GpuAvailable)
+                {
+                    <text>
+                        The CPU gives the best quality per byte and is slow: roughly real time for 1080p, and
+                        several times that for 4K. The GPU is ten to thirty times faster and needs more bits for
+                        the same picture, so files come out bigger, or the same size and slightly softer. Now
+                        that every phone video goes through the encoder, that trade is usually worth it.
+                        The quality number below means something different to each of them, so expect to
+                        re-tune it if you switch. A hardware encode that fails falls back to the CPU on its own.
+                    </text>
+                }
+                else
+                {
+                    <text>
+                        This server can't encode on a GPU: <span class="mono">@Model.GpuUnavailableReason</span>.
+                        Everything runs on the CPU. In Docker, hardware encoding needs an x86 host with a render
+                        node and <span class="mono">devices: - /dev/dri:/dev/dri</span> in your compose file.
+                    </text>
+                }
+            </div>
+
             <label class="form-label" for="preset">Encoding speed</label>
             <select name="preset" id="preset" class="form-select mb-1" style="max-width: 18rem;">
                 @foreach (var p in VideoSettings.AllowedPresets)
@@ -91,3 +123,13 @@
         </form>
     </div>
 </div>
+
+@if (!Model.CanToneMap)
+{
+    <p class="text-secondary small mt-3" style="max-width: 640px;">
+        This ffmpeg can't tone-map HDR (no <span class="mono">zscale</span>). An HDR upload's H.264 copy is
+        labelled correctly but not converted, so it will look flat on the devices that fall back to it. The
+        H.265 rendition still carries real HDR for the devices that can show it. The bundled Docker image
+        does have zscale.
+    </p>
+}

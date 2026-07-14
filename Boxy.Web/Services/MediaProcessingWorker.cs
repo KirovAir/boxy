@@ -14,6 +14,7 @@ public class MediaProcessingWorker(
     IBlobStore storage,
     MediaProcessor processor,
     VideoSettingsProvider videoSettings,
+    FfmpegCapabilities capabilities,
     FileMetadataExtractor metadata,
     MediaProcessingQueue queue,
     ILogger<MediaProcessingWorker> logger) : BackgroundService
@@ -257,7 +258,7 @@ public class MediaProcessingWorker(
         {
             var settings = ConversionProfiles.Settings(item.Profile, await videoSettings.GetEffectiveAsync(ct));
             var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
-            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe.VideoCodec, expectedDuration, settings, ct);
+            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe, expectedDuration, settings, ct);
             if (produced is null)
             {
                 // Never take a live, published video offline because a reprocess failed - leave it serving
@@ -322,7 +323,7 @@ public class MediaProcessingWorker(
     /// probe of what was produced, or null when nothing servable could be made.
     /// </summary>
     private async Task<ProbeResult?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
-        string? videoCodec, double? duration, VideoSettings settings, CancellationToken ct)
+        ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct)
     {
         // Reuse a valid web file from an earlier run / another item with identical content. The codec set
         // is what makes this safe across the H.265 change: an -h264.mp4 that somehow isn't H.264 is
@@ -343,7 +344,7 @@ public class MediaProcessingWorker(
             // Lossless remux when the source is already H.264 + AAC/MP3/none and only the container is
             // wrong (a .mov, or an mp4 with its moov atom at the end).
             if (copyable
-                && await processor.RemuxFastStartAsync(originalPath, scratch, videoCodec, ct)
+                && await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct)
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } remuxed)
             {
                 await storage.PutAsync(webName, scratch, ct);
@@ -353,7 +354,7 @@ public class MediaProcessingWorker(
             TryDeleteLocal(scratch);
 
             // Universal fallback: full transcode to H.264/AAC mp4.
-            if (await processor.TranscodeWebAsync(originalPath, scratch, settings, ct)
+            if (await processor.TranscodeWebAsync(originalPath, scratch, settings, capabilities.ForEncoding(), probe.IsHdr, ct)
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } encoded)
             {
                 await storage.PutAsync(webName, scratch, ct);

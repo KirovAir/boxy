@@ -113,6 +113,7 @@ await builder.RunWithLoggingAsync(async b =>
     // transcode time (admin edits in-app, else the same section), so changes apply without a restart.
     b.Services.Configure<FfmpegSettings>(b.Configuration.GetSection(FfmpegSettings.SectionName));
     b.Services.AddSingleton<VideoSettingsProvider>();
+    b.Services.AddSingleton<FfmpegCapabilities>();
     b.Services.AddSingleton<MediaProcessor>();
     b.Services.AddSingleton<FileMetadataExtractor>();
     b.Services.AddSingleton<MediaProcessingQueue>();
@@ -160,6 +161,11 @@ await builder.RunWithLoggingAsync(async b =>
         {
             await remoteStore.EnsureReadyAsync();
         }
+
+        // Ask ffmpeg what this machine can actually do, once, before the worker takes its first item: can
+        // it tone-map HDR, and can it really encode on the GPU. Both are properties of the deployment, and
+        // finding out per-video would mean finding out the hard way, one failed transcode at a time.
+        await scope.ServiceProvider.GetRequiredService<FfmpegCapabilities>().DetectAsync();
     }
 
     // ── Middleware ────────────────────────────────────────────────────

@@ -3,6 +3,22 @@ using Boxy.Data.Entities;
 namespace Boxy.Web.Models;
 
 /// <summary>
+/// Who does the encoding. This is a CHOICE, not a path, which is why it is safe to have in the in-app
+/// settings at all: it selects between two code-defined command lines. The render device it implies is a
+/// path, and that stays in <see cref="FfmpegSettings"/>, out of reach of HTTP.
+/// </summary>
+public enum VideoEncoder
+{
+    /// <summary>libx264 on the CPU. The best quality per byte, and slow: roughly real time for 1080p.</summary>
+    Software,
+
+    /// <summary>The GPU, via VAAPI. Ten to thirty times faster, and needs more bits for the same picture.
+    /// Falls back to software whenever the machine turns out not to have a usable render device, and
+    /// whenever a hardware encode fails, so choosing it can never be worse than not choosing it.</summary>
+    Hardware
+}
+
+/// <summary>
 /// The video-encoding knobs an admin controls in-app, stored as one JSON row in the <c>Config</c> table
 /// (see <c>ConfigExtensions</c>). Applies to videos transcoded from now on - anything already encoded
 /// keeps the rendition it has.
@@ -34,6 +50,10 @@ public class VideoSettings
     /// becomes, so it is the setting that sets this server's disk and CPU bill.</summary>
     public ConversionProfile DefaultProfile { get; set; } = ConversionProfiles.Fallback;
 
+    /// <summary>Whether to encode on the CPU or the GPU. Ignored on a machine with no usable render
+    /// device: there is nothing to fall back FROM, so it simply runs in software.</summary>
+    public VideoEncoder Encoder { get; set; } = VideoEncoder.Software;
+
     /// <summary>The x264 presets we accept, fastest-to-slowest. "placebo" is excluded on purpose.</summary>
     public static readonly string[] AllowedPresets =
     [
@@ -56,7 +76,8 @@ public class VideoSettings
             Preset = preset is not null && AllowedPresets.Contains(preset) ? preset : "slow",
             // A JSON blob is easy to hand-edit and a form is easy to forge: an undefined enum member would
             // otherwise fall through every switch in the worker and quietly transcode nothing.
-            DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback
+            DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback,
+            Encoder = Enum.IsDefined(Encoder) ? Encoder : VideoEncoder.Software
         };
     }
 }

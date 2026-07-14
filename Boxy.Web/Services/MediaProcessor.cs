@@ -82,6 +82,7 @@ public class MediaProcessor(
 
         int? width = null, height = null, rotation = null, level = null;
         string? videoCodec = null, audioCodec = null, pixFmt = null, videoProfile = null, codecTag = null;
+        string? colorTransfer = null;
         double? videoDuration = null;
 
         if (root.TryGetProperty("streams", out var streams))
@@ -112,6 +113,9 @@ public class MediaProcessor(
                         ? lv.GetInt32()
                         : null;
                     codecTag = s.TryGetProperty("codec_tag_string", out var tg) ? tg.GetString() : null;
+                    // The transfer curve is what makes a file HDR, and 10-bit alone is NOT it: plenty of
+                    // 10-bit footage is ordinary SDR, and tone-mapping that would wreck it.
+                    colorTransfer = s.TryGetProperty("color_transfer", out var trc) ? trc.GetString() : null;
                     // Per-stream duration (when present) is the length of the video track itself -
                     // the right yardstick for truncation checks, since we -map only this stream and
                     // the container's format.duration can be inflated by other (dropped) tracks.
@@ -145,7 +149,7 @@ public class MediaProcessor(
 
         return new ProbeResult(width, height, duration, videoCodec, audioCodec, pixFmt, videoDuration,
             creation, rotation is null ? null : Math.Abs(rotation.Value) % 360,
-            videoProfile, level, codecTag);
+            videoProfile, level, codecTag, colorTransfer);
     }
 
     // Rotation lives either in a stream tag (tags.rotate) or a "Display Matrix" side-data entry, depending
@@ -268,10 +272,43 @@ public class MediaProcessor(
     /// -pix_fmt yuv420p forces 8-bit 4:2:0 (browsers can't decode the yuv420p10le a 10-bit/HDR source
     /// would otherwise produce).
     /// </summary>
-    public async Task<bool> TranscodeWebAsync(string input, string output, VideoSettings settings, CancellationToken ct = default)
+    /// <summary>
+    /// Encodes the H.264 file. On the GPU when the admin asked for it and this machine proved at boot that
+    /// it can, and if that encode fails for any reason at all, again on the CPU before giving up.
+    ///
+    /// That retry is the point of the whole hardware path. Render devices are a minefield of drivers,
+    /// permissions and container passthrough, and a video that cannot be encoded is a video nobody can
+    /// watch. Falling back means the worst case of turning hardware on is exactly the behaviour of leaving
+    /// it off, one wasted attempt later.
+    /// </summary>
+    public async Task<bool> TranscodeWebAsync(string input, string output, VideoSettings settings,
+        EncoderCapabilities caps, bool sourceIsHdr, CancellationToken ct = default)
     {
+        var onGpu = settings.Normalized().Encoder == VideoEncoder.Hardware && caps.CanEncodeOnGpu;
+        if (onGpu)
+        {
+            var hw = ScratchPath(output);
+            var (hwCode, _, hwErr) = await RunAsync(FfmpegPath,
+                TranscodeArgs(input, hw, settings, caps, sourceIsHdr), TranscodeTimeout, ct);
+            if (Finalize(hwCode, hw, output))
+            {
+                return true;
+            }
+
+            logger.LogWarning("Hardware encode failed for {Path}, falling back to the CPU: {Err}", input, Tail(hwErr));
+        }
+
+        // Software, either because that is what was asked for or because the GPU just declined.
+        var software = new VideoSettings
+        {
+            Crf = settings.Crf, MaxLongEdge = settings.MaxLongEdge, Preset = settings.Preset,
+            MaxrateKbps = settings.MaxrateKbps, DefaultProfile = settings.DefaultProfile,
+            Encoder = VideoEncoder.Software
+        };
+
         var tmp = ScratchPath(output);
-        var (code, _, err) = await RunAsync(FfmpegPath, TranscodeArgs(input, tmp, settings), TranscodeTimeout, ct);
+        var (code, _, err) = await RunAsync(FfmpegPath,
+            TranscodeArgs(input, tmp, software, caps, sourceIsHdr), TranscodeTimeout, ct);
         if (code != 0)
         {
             logger.LogError("Transcode failed for {Path}: {Err}", input, Tail(err));
@@ -281,39 +318,79 @@ public class MediaProcessor(
     }
 
     /// <summary>
-    /// Builds the ffmpeg argument line for a web transcode. Static and pure so the settings actually reach
-    /// the encoder (and so a bad preset can never smuggle in extra arguments) is testable. Normalizes again
-    /// as belt and braces: a command line is never built from unclamped input.
+    /// Builds the ffmpeg argument line for a web transcode. Static and pure so that the settings actually
+    /// reaching the encoder is testable, and so a bad preset can never smuggle in extra arguments.
+    /// Normalizes again as belt and braces: a command line is never built from unclamped input.
+    ///
+    /// The filter chain is built in the order the pixels travel: fix the colour, then the size, then hand
+    /// it to whoever is doing the encoding.
     /// </summary>
-    public static string TranscodeArgs(string input, string output, VideoSettings settings)
+    public static string TranscodeArgs(string input, string output, VideoSettings settings,
+        EncoderCapabilities caps, bool sourceIsHdr)
     {
         var v = settings.Normalized();
-        // scale=trunc(.../2)*2 rounds odd dimensions down to even (libx264 requires even w/h).
-        var scale = v.MaxLongEdge > 0
+        var onGpu = v.Encoder == VideoEncoder.Hardware && caps.CanEncodeOnGpu;
+
+        var filters = new List<string>();
+
+        // ── Colour ────────────────────────────────────────────────────────────────────────────────────
+        // An HDR source is 10-bit, BT.2020, PQ. The output is 8-bit SDR, and ffmpeg carries the source's
+        // colour tags across regardless, so without help the file claims PQ while holding SDR pixels and a
+        // colour-managed browser applies an HDR curve to them and renders the video wrong.
+        //
+        // Given zscale we can do the real thing: convert to linear light, map the highlights down with a
+        // proper curve, and land in BT.709. Without it (a stock Homebrew ffmpeg has no zscale; the runtime
+        // image does) we can at least stop lying, and label the output as the SDR it is.
+        //
+        // Only for genuinely HDR sources - ProbeResult.IsHdr asks about the transfer curve, not the bit
+        // depth, because tone-mapping ordinary 10-bit SDR footage would crush it for no reason.
+        if (sourceIsHdr && caps.CanToneMap)
+        {
+            filters.Add("zscale=t=linear:npl=100");
+            filters.Add("format=gbrpf32le");
+            filters.Add("zscale=p=bt709");
+            filters.Add("tonemap=tonemap=hable:desat=0");
+            filters.Add("zscale=t=bt709:m=bt709:r=tv");
+            filters.Add("format=yuv420p");
+        }
+
+        // ── Size ──────────────────────────────────────────────────────────────────────────────────────
+        // trunc(../2)*2 rounds odd dimensions down to even (H.264 requires even w/h).
+        filters.Add(v.MaxLongEdge > 0
             ? $"scale='min({v.MaxLongEdge},iw)':'min({v.MaxLongEdge},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"
-            : "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+            : "scale=trunc(iw/2)*2:trunc(ih/2)*2");
 
-        // An HDR source is 10-bit BT.2020/PQ. -pix_fmt yuv420p makes the output 8-bit SDR, but ffmpeg
-        // carries the source's colour tags into the output anyway, so the file ends up claiming PQ while
-        // holding SDR pixels - and a colour-managed browser then applies an HDR curve to them and renders
-        // the video wrong. setparams stamps what the output actually is.
-        //
-        // This is a label, not a conversion: it stops the browser mis-decoding, it does not tone-map. Doing
-        // that properly needs an ffmpeg built with zscale (the runtime image has it, a stock Homebrew build
-        // does not), so it is deliberately left out rather than shipped untested. It costs little: under the
-        // default profile an HDR upload keeps its H.265 rendition, so the devices that can actually show
-        // HDR are served the untouched original, and this file is the fallback for the ones that cannot.
-        //
-        // The obvious `-color_primaries bt709 -color_trc bt709 -colorspace bt709` output options do NOT
-        // work here - ffmpeg accepts them and writes the source's tags anyway. Verified against the real
-        // binary; don't "simplify" this back.
-        var colours = ",setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709";
+        // Say what the output is. Note the obvious `-color_primaries bt709 -color_trc bt709 -colorspace
+        // bt709` OUTPUT options do not do this: ffmpeg accepts them and writes the source's tags anyway.
+        // Verified against the real binary. Don't "simplify" this back.
+        filters.Add("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709");
 
-        var rate = v.MaxrateKbps > 0 ? $"-maxrate {v.MaxrateKbps}k -bufsize {v.MaxrateKbps * 2}k " : "";
+        // ── Encoder ───────────────────────────────────────────────────────────────────────────────────
+        if (!onGpu)
+        {
+            var rate = v.MaxrateKbps > 0 ? $"-maxrate {v.MaxrateKbps}k -bufsize {v.MaxrateKbps * 2}k " : "";
+            return
+                $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? "
+                + $"-vf \"{string.Join(',', filters)}\" "
+                + $"-c:v libx264 -preset {v.Preset} -crf {v.Crf} {rate}-profile:v high -pix_fmt yuv420p "
+                + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
+        }
+
+        // The GPU wants its frames in its own memory, in a format it understands, so the chain ends by
+        // converting to nv12 and uploading. Everything above still runs on the CPU, which is fine: the
+        // encode is the expensive part, and this keeps one filter chain rather than two.
+        filters.Add("format=nv12");
+        filters.Add("hwupload");
+
+        // VAAPI has no CRF. Constant-QP is the closest thing to "aim for a quality, not a bitrate", and the
+        // same number means something different here than it does to x264 - the settings page says so
+        // rather than pretending the two are comparable. No -maxrate: it is ignored under CQP.
         return
-            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -vf \"{scale}{colours}\" " +
-            $"-c:v libx264 -preset {v.Preset} -crf {v.Crf} {rate}-profile:v high -pix_fmt yuv420p " +
-            $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
+            $"-nostdin -hide_banner -nostats -loglevel error -y -vaapi_device {caps.VaapiDevice} "
+            + $"-i \"{input}\" -map 0:v:0 -map 0:a:0? "
+            + $"-vf \"{string.Join(',', filters)}\" "
+            + $"-c:v h264_vaapi -rc_mode CQP -qp {v.Crf} -profile:v high "
+            + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
     }
 
     /// <summary>Remux (no re-encode) into a real mp4 container with the moov atom up front. Takes the
@@ -671,4 +748,13 @@ public record ProbeResult(
     int? Rotation = null, // 0/90/180/270 display rotation
     string? Profile = null, // codec profile, e.g. "Main", "Main 10", "High"
     int? Level = null, // general_level_idc, e.g. 120 for level 4.0
-    string? CodecTag = null); // container tag, e.g. "hvc1", "hev1", "avc1"
+    string? CodecTag = null, // container tag, e.g. "hvc1", "hev1", "avc1"
+    string? ColorTransfer = null) // transfer curve: "smpte2084" (PQ) and "arib-std-b67" (HLG) are HDR
+{
+    /// <summary>
+    /// True when this is genuinely high dynamic range, which is a question about the TRANSFER CURVE and
+    /// nothing else. Deliberately not "is it 10-bit": plenty of 10-bit video is ordinary SDR, and running
+    /// a tone-map over that would crush contrast on footage that was perfectly fine.
+    /// </summary>
+    public bool IsHdr => ColorTransfer is "smpte2084" or "arib-std-b67";
+}

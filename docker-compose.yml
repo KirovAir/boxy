@@ -22,3 +22,16 @@ services:
     volumes:
       # The SQLite database and all uploaded files live here. Back this up.
       - ./data:/data
+
+    # Hardware video encoding. Uncomment on an x86 host with a GPU render node (most Intel NAS boxes have
+    # one), then turn it on under Settings -> Video. It encodes ten to thirty times faster than the CPU,
+    # which matters because every uploaded video is converted to H.264 so that it plays everywhere.
+    #
+    # Boxy tries to encode a single frame on the GPU at startup and simply stays on the CPU if it can't, so
+    # leaving this commented out, or getting it wrong, costs you speed and nothing else. Check the logs on
+    # boot: it says what it found. If the device exists but won't encode, the container user usually isn't
+    # in the host's "render" group - add its gid under group_add.
+    #devices:
+    #  - /dev/dri:/dev/dri
+    #group_add:
+    #  - "104"   # the host's 'render' group: getent group render | cut -d: -f3
