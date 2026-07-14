@@ -214,15 +214,38 @@
         return '&size=' + job.file.size + '&chunkSize=' + CHUNK;
     }
 
+    // Ask which parts the server already holds. This is worth being stubborn about: giving up and reporting
+    // "none" means re-sending the entire file, so a blip here costs gigabytes. It waits for the network and
+    // retries on the same budget a chunk gets, and only ever gives up when the server says no (a 4xx) or the
+    // retries run out - in which case re-sending everything is all that's left.
     function fetchExisting(job) {
-        return fetch(chunksUrl + '?uploadId=' + encodeURIComponent(job.uploadId) + layoutQuery(job),
-            {headers: {'Accept': 'application/json'}})
-            .then(function (r) {
-                return r.ok ? r.json() : {have: []};
-            })
-            .then(function (d) {
-                return (d && d.have) || [];
-            });
+        return whenOnline().then(function () {
+            return probe(0);
+        });
+
+        function probe(tries) {
+            return fetch(chunksUrl + '?uploadId=' + encodeURIComponent(job.uploadId) + layoutQuery(job),
+                {headers: {'Accept': 'application/json'}})
+                .then(function (r) {
+                    if (r.ok) return r.json();
+                    throw {permanent: isPermanent(r.status)};
+                })
+                .then(function (d) {
+                    return (d && d.have) || [];
+                })
+                .catch(function (e) {
+                    if (job.cancelled || (e && e.permanent) || tries >= RETRIES) return [];
+                    return delay(backoffMs(tries)).then(whenOnline).then(function () {
+                        return probe(tries + 1);
+                    });
+                });
+        }
+    }
+
+    function delay(ms) {
+        return new Promise(function (resolve) {
+            setTimeout(resolve, ms);
+        });
     }
 
     function chunkBytes(job, idx) {
@@ -326,6 +349,7 @@
             }
 
             if (job.resume) {
+                // fetchExisting settles either way: an empty list just means every chunk gets sent.
                 fetchExisting(job).then(function (list) {
                     list.forEach(function (idx) {
                         if (idx >= 0 && idx < job.total) {
@@ -335,7 +359,7 @@
                     });
                     onProgress(job);   // reflect the already-uploaded bytes in the bar
                     begin();
-                }, begin);             // if the query fails, just upload everything
+                });
             } else {
                 begin();
             }
