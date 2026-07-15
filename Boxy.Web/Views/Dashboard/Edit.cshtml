@@ -207,7 +207,9 @@
                    until the poll reports an active conversion, so a settled item shows nothing. *@
                 var convStatus = Model.Status == MediaStatus.Ready ? "ready"
                     : Model.Status == MediaStatus.Failed ? "failed" : "processing";
-                <div class="conv-progress mb-3" data-slug="@Model.Slug" data-status="@convStatus" hidden>
+                @* Deliberately NOT data-slug/data-status: upload.js polls any [data-status=processing][data-slug]
+                   and reloads it, which would double-poll and bypass this poller's unsaved-edits guard. *@
+                <div class="conv-progress mb-3" data-conv-slug="@Model.Slug" data-conv-status="@convStatus" hidden>
                     <div class="d-flex justify-content-between small text-secondary mb-1">
                         <span class="conv-progress-label">Processing…</span>
                         <span class="conv-progress-pct"></span>

@@ -51,8 +51,13 @@ public class MediaProcessingWorker(
             }
             finally
             {
-                // However it ended - done, failed, or crashed - this item is no longer in flight, so its
-                // live progress goes away. One place, so no exit path inside ProcessAsync can leak an entry.
+                // However it ended - done, failed, or crashed - this item is no longer in flight. Balance
+                // the enqueue first (so it stops counting as pending), then drop the live report. One place,
+                // so no exit path inside ProcessAsync can leak either. Done-before-Clear means an actively
+                // reported stage stays visible right up to the moment it's cleared, with no "Queued" flicker
+                // in between; and if a second request for this id is still pending, it correctly reads as
+                // Queued again the instant this run's report is gone.
+                queue.Done(id);
                 progress.Clear(id);
             }
         }

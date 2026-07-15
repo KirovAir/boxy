@@ -1,16 +1,19 @@
 // Live conversion progress on the edit page. It polls the same /api/media/{slug}/status endpoint the
 // dashboard already uses; when the response carries a `progress` block, it shows a bar. There is no realtime
 // channel: the worker writes progress to an in-memory store as it encodes, and the endpoint reads it.
+//
+// Its element uses data-conv-* attributes on purpose, NOT data-slug/data-status: upload.js watches any
+// [data-status="processing"][data-slug] and reloads it, which would both double-poll and bypass the
+// unsaved-edits guard below.
 (function () {
     'use strict';
 
-    var el = document.querySelector('.conv-progress[data-slug]');
+    var el = document.querySelector('.conv-progress[data-conv-slug]');
     if (!el) {
         return;
     }
 
-    var slug = el.getAttribute('data-slug');
-    var initialStatus = el.getAttribute('data-status'); // ready | failed | processing (at page load)
+    var slug = el.getAttribute('data-conv-slug');
     var bar = el.querySelector('.conv-progress-bar');
     var label = el.querySelector('.conv-progress-label');
     var pct = el.querySelector('.conv-progress-pct');
@@ -19,6 +22,15 @@
     var POLL_MS = 1500;
     var sawActivity = false;
     var timer = null;
+
+    // Track whether the owner has touched any form field, so completing a conversion never silently reloads
+    // over unsaved metadata edits. Any input the user is likely mid-editing sets this; when it's set we offer
+    // a refresh instead of reloading.
+    var formDirty = false;
+    document.querySelectorAll('form input, form select, form textarea').forEach(function (field) {
+        field.addEventListener('input', function () { formDirty = true; });
+        field.addEventListener('change', function () { formDirty = true; });
+    });
 
     var STAGE_LABEL = {
         queued: 'Queued',
@@ -44,19 +56,22 @@
         }
     }
 
-    function finish() {
+    function stop() {
         el.hidden = true;
         if (timer) {
             clearTimeout(timer);
             timer = null;
         }
+    }
+
+    function finish() {
+        stop();
         if (!sawActivity) {
             return; // nothing was happening (a ready item with no re-encode): leave the page untouched
         }
-        // A conversion we were watching just ended. A page loaded mid-processing (a fresh upload) is now
-        // stale, so reload it to show the finished result. For a re-encode of an item that stayed live the
-        // whole time, the owner may be mid-edit, so offer a refresh instead of yanking the page away.
-        if (initialStatus === 'processing') {
+        // A conversion we were watching just ended. Reload to show the finished result - unless the owner has
+        // edits in the form, in which case reloading would throw them away, so offer a refresh instead.
+        if (!formDirty) {
             window.location.reload();
         } else if (done) {
             done.hidden = false;
@@ -68,10 +83,19 @@
             headers: { 'Accept': 'application/json' },
             cache: 'no-store'
         }).then(function (r) {
-            return r.ok ? r.json() : null;
+            // The item is gone (deleted, or no longer visible): stop, don't reload into a 404.
+            if (r.status === 404 || r.status === 410) {
+                stop();
+                return null;
+            }
+
+            return r.ok ? r.json() : 'retry';
         }).then(function (data) {
-            if (!data) {
-                timer = setTimeout(poll, POLL_MS);
+            if (data === null) {
+                return; // stopped
+            }
+            if (data === 'retry') {
+                timer = setTimeout(poll, POLL_MS); // transient non-OK: try again
                 return;
             }
 

@@ -12,7 +12,7 @@ namespace Boxy.Web.Controllers;
 /// deliberately no download endpoint.
 /// </summary>
 public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobStore storage, ShareUnlock unlock,
-    ConversionProgress progress) : Controller
+    ConversionProgress progress, MediaProcessingQueue queue) : Controller
 {
     // A published share with a password stays invisible to the public until unlocked; the owner or the
     // anonymous uploader (CanManage) always passes.
@@ -172,18 +172,21 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         }
 
         // Live conversion progress rides along on the same poll, so the edit page can show a bar without a
-        // second request or any realtime channel. Null unless something is queued or running for this item
-        // (including a "convert again" on an item that stays Ready throughout).
+        // second request or any realtime channel. Prefer the worker's live report; fall back to the queue's
+        // "pending" for an item waiting its turn (or a "convert again" on an item that stays Ready). Null when
+        // neither, so a settled item reports no progress.
         var snapshot = progress.Get(item.Id);
+        var stage = snapshot?.Stage.ToString().ToLowerInvariant()
+                    ?? (queue.IsPending(item.Id) ? "queued" : null);
         return Json(new
         {
             status = item.Status.ToString(),
             ready = item.Status == MediaStatus.Ready,
             failed = item.Status == MediaStatus.Failed,
             poster = item.PosterFileName is not null,
-            progress = snapshot is { } s
-                ? new { stage = s.Stage.ToString().ToLowerInvariant(), percent = s.Percent, speed = s.Speed }
-                : null
+            progress = stage is null
+                ? null
+                : new { stage, percent = snapshot?.Percent, speed = snapshot?.Speed }
         });
     }
 

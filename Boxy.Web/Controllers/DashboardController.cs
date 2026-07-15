@@ -23,7 +23,6 @@ public class DashboardController(
     MediaProcessor processor,
     VideoSettingsProvider videoSettings,
     MediaProcessingQueue queue,
-    ConversionProgress progress,
     IEmailSender emailSender,
     EmailComposer emailComposer,
     IConfiguration config,
@@ -1125,11 +1124,11 @@ public class DashboardController(
         // rather than skipped as already-hopeless.
         item.ErrorMessage = null;
         await db.SaveChangesAsync(ct);
+        // The item stays Ready (its share keeps playing), so status alone wouldn't tell the edit page a
+        // re-encode is happening. Enqueuing marks it pending, which the status endpoint surfaces as "Queued"
+        // from the click, then the worker's live report takes over. No request-thread write to the progress
+        // store, so there's no race with the worker clearing it.
         queue.EnqueueBackfill(item.Id);
-        // The item stays Ready (its share keeps playing), so the status poll wouldn't otherwise know a
-        // re-encode is happening. Seed a Queued entry so the edit page shows a bar from the moment it's
-        // asked for; the worker then drives it through Preparing/Converting and clears it when done.
-        progress.Report(item.Id, ConversionStage.Queued);
 
         this.FlashSuccess($"Converting again as “{ConversionProfiles.Label(chosen)}”. It keeps playing until the new version is ready.");
         return RedirectToAction(nameof(Edit), new { id });
