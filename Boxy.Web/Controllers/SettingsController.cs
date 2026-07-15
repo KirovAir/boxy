@@ -195,6 +195,8 @@ public class SettingsController(
             MaxrateKbps = s.MaxrateKbps,
             DefaultProfile = s.DefaultProfile,
             Encoder = s.Encoder,
+            ConversionMode = s.ConversionMode,
+            GeneratePosters = s.GeneratePosters,
             GpuAvailable = capabilities.CanEncodeOnGpu,
             GpuUnavailableReason = capabilities.GpuUnavailableReason,
             CanToneMap = capabilities.CanToneMap,
@@ -205,7 +207,7 @@ public class SettingsController(
     [HttpPost("video")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Video(int crf, int maxLongEdge, string? preset, int maxrateKbps,
-        string? defaultProfile, string? encoder, CancellationToken ct)
+        string? defaultProfile, string? encoder, string? conversionMode, bool generatePosters, CancellationToken ct)
     {
         // Settings are stored as one JSON blob, so a field the form doesn't send is not "unchanged", it is
         // gone: build the new value from the stored one rather than from nothing.
@@ -224,7 +226,13 @@ public class SettingsController(
             // else keeps what is stored. Normalized() checks it again on the way into the DB.
             Encoder = Enum.TryParse<VideoEncoder>(encoder, true, out var chosen) && Enum.IsDefined(chosen)
                 ? chosen
-                : current.Encoder
+                : current.Encoder,
+            // Same treatment as the encoder: parsed against the defined members, anything else keeps what is
+            // stored. Normalized() checks it again on the way into the DB.
+            ConversionMode = Enum.TryParse<ConversionMode>(conversionMode, true, out var mode) && Enum.IsDefined(mode)
+                ? mode
+                : current.ConversionMode,
+            GeneratePosters = generatePosters
         }, ct);
 
         this.FlashSuccess("Video settings saved. They apply to videos uploaded from now on.");

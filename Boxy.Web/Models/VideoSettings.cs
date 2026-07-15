@@ -19,6 +19,26 @@ public enum VideoEncoder
 }
 
 /// <summary>
+/// The global ceiling on what conversion may do - the one lever that lets a light server cap or switch off
+/// the single most expensive thing Boxy does. A per-upload or per-box profile is still honoured, but never
+/// beyond this: <see cref="ConversionProfiles.UnderMode"/> clamps it, and the worker persists the result.
+/// </summary>
+public enum ConversionMode
+{
+    /// <summary>Full conversions: transcode to H.264 as each profile asks. The default.</summary>
+    Full,
+
+    /// <summary>Remux only: never re-encode. Stream-copies an upload into a faststart mp4 where the container
+    /// needs it (a .mov into an .mp4), codec untouched - cheap, no CPU. Caps heavier profiles down to this,
+    /// so an H.265 phone clip stays H.265 and only Safari plays it inline.</summary>
+    Remux,
+
+    /// <summary>Off: store and serve originals exactly as uploaded - no transcode, no remux. Lightest; a
+    /// viewer whose browser lacks the codec gets nothing to play.</summary>
+    Off
+}
+
+/// <summary>
 /// The video-encoding knobs an admin controls in-app, stored as one JSON row in the <c>Config</c> table
 /// (see <c>ConfigExtensions</c>). Applies to videos transcoded from now on - anything already encoded
 /// keeps the rendition it has.
@@ -54,6 +74,15 @@ public class VideoSettings
     /// device: there is nothing to fall back FROM, so it simply runs in software.</summary>
     public VideoEncoder Encoder { get; set; } = VideoEncoder.Software;
 
+    /// <summary>The global ceiling on conversion work (see <see cref="ConversionMode"/>). Full by default;
+    /// Remux and Off cap every upload's profile down, whatever the box or the uploader asked for.</summary>
+    public ConversionMode ConversionMode { get; set; } = ConversionMode.Full;
+
+    /// <summary>Whether to generate poster frames and image thumbnails at all. On by default, and independent
+    /// of <see cref="ConversionMode"/>: a light server can keep cheap posters while switching transcoding
+    /// off, or drop posters too to avoid every ffmpeg call.</summary>
+    public bool GeneratePosters { get; set; } = true;
+
     /// <summary>The x264 presets we accept, fastest-to-slowest. "placebo" is excluded on purpose.</summary>
     public static readonly string[] AllowedPresets =
     [
@@ -77,7 +106,9 @@ public class VideoSettings
             // A JSON blob is easy to hand-edit and a form is easy to forge: an undefined enum member would
             // otherwise fall through every switch in the worker and quietly transcode nothing.
             DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback,
-            Encoder = Enum.IsDefined(Encoder) ? Encoder : VideoEncoder.Software
+            Encoder = Enum.IsDefined(Encoder) ? Encoder : VideoEncoder.Software,
+            ConversionMode = Enum.IsDefined(ConversionMode) ? ConversionMode : ConversionMode.Full,
+            GeneratePosters = GeneratePosters
         };
     }
 }

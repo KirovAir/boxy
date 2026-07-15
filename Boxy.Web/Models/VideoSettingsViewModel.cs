@@ -16,6 +16,12 @@ public class VideoSettingsViewModel
 
     public required VideoEncoder Encoder { get; init; }
 
+    /// <summary>The global conversion ceiling: Full, Remux (no re-encode), or Off (store originals as-is).</summary>
+    public required ConversionMode ConversionMode { get; init; }
+
+    /// <summary>Whether posters/thumbnails are generated at all - independent of the conversion mode.</summary>
+    public required bool GeneratePosters { get; init; }
+
     /// <summary>Whether this server actually managed to encode a frame on its GPU at startup. When false the
     /// hardware option is shown disabled with the reason, rather than silently doing nothing when picked.</summary>
     public required bool GpuAvailable { get; init; }

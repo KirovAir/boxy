@@ -24,6 +24,32 @@
         <form method="post" action="/settings/video">
             @Html.AntiForgeryToken()
 
+            <label class="form-label" for="conversionMode">Conversions</label>
+            <select name="conversionMode" id="conversionMode" class="form-select mb-1" style="max-width: 24rem;">
+                <option value="@ConversionMode.Full" selected="@(Model.ConversionMode == ConversionMode.Full)">Full conversions</option>
+                <option value="@ConversionMode.Remux" selected="@(Model.ConversionMode == ConversionMode.Remux)">Remux only (no re-encode)</option>
+                <option value="@ConversionMode.Off" selected="@(Model.ConversionMode == ConversionMode.Off)">Off (store originals as-is)</option>
+            </select>
+            <div class="form-text mb-4">
+                The ceiling on the heaviest thing Boxy does, for a light server.
+                <span class="mono">Full</span> transcodes to H.264 as each profile below asks.
+                <span class="mono">Remux only</span> never re-encodes - it just stream-copies a <span class="mono">.mov</span>
+                into an <span class="mono">.mp4</span> container (fast, no CPU), so an H.265 phone clip stays
+                H.265 and only plays inline in Safari. <span class="mono">Off</span> stores and serves exactly
+                what was uploaded. Remux and Off override every per-box and per-upload choice.
+            </div>
+
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="generatePosters" value="true" class="form-check-input" id="posters"
+                       role="switch" @(Model.GeneratePosters ? "checked" : "")/>
+                <label class="form-check-label" for="posters">Generate posters and thumbnails</label>
+            </div>
+            <div class="form-text mb-4">
+                Poster frames for videos and thumbnails for photos (including iPhone HEIC) - a quick
+                single-frame ffmpeg grab, independent of the conversion setting above. Turn off to avoid every
+                ffmpeg call on a minimal server; the gallery then falls back to a file-type icon.
+            </div>
+
             <label class="form-label" for="defaultProfile">Default conversion</label>
             <select name="defaultProfile" id="defaultProfile" class="form-select mb-1" style="max-width: 24rem;">
                 @foreach (var p in ConversionProfiles.Choices)

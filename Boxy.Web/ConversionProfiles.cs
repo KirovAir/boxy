@@ -82,6 +82,17 @@ public static class ConversionProfiles
         return chosen ?? boxDefault ?? instanceDefault;
     }
 
+    /// <summary>The profile actually used once the global <see cref="ConversionMode"/> ceiling is applied.
+    /// Full honours it; Remux and Off both cap any transcoding profile down to
+    /// <see cref="ConversionProfile.AsUploaded"/> - the difference between them is only whether the worker
+    /// then remuxes or serves the original, which it decides from the mode. Collapsing both onto one profile
+    /// is what keeps <see cref="NeedsReprocessing"/> valid: an AsUploaded item that serves its own original
+    /// (no derived web file) is already a terminal state the heal accepts.</summary>
+    public static ConversionProfile UnderMode(ConversionProfile profile, ConversionMode mode)
+    {
+        return mode == ConversionMode.Full ? profile : ConversionProfile.AsUploaded;
+    }
+
     /// <summary>True when this profile ever re-encodes. <see cref="ConversionProfile.AsUploaded"/> never does.</summary>
     public static bool Transcodes(ConversionProfile profile)
     {

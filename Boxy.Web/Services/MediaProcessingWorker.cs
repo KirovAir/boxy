@@ -133,6 +133,11 @@ public class MediaProcessingWorker(
         item.ErrorMessage = null;
         await db.SaveChangesAsync(ct);
 
+        // The effective video config governs the two heavy choices below: whether to make posters at all,
+        // and the global conversion ceiling (Full/Remux/Off). Read once here so the item, what we serve, and
+        // the startup heal all reason from the same answer.
+        var videoCfg = await videoSettings.GetEffectiveAsync(ct);
+
         // Pull the original to a local path for ffmpeg. On a remote backend this is a temp download,
         // deleted when this method returns; on the filesystem backend it's the blob itself (no copy).
         using var original = await storage.GetLocalCopyAsync(item.ContentHash + item.Extension, ct);
@@ -165,7 +170,8 @@ public class MediaProcessingWorker(
         {
             // Distinct name so a .jpg original never becomes its own ffmpeg input+output.
             var thumb = item.ContentHash + "-thumb.jpg";
-            if (await storage.ExistsAsync(thumb, ct) || await ProduceImageThumbnailAsync(originalPath, item.Extension, thumb, ct))
+            if (videoCfg.GeneratePosters
+                && (await storage.ExistsAsync(thumb, ct) || await ProduceImageThumbnailAsync(originalPath, item.Extension, thumb, ct)))
             {
                 item.PosterFileName = thumb;
             }
@@ -210,7 +216,7 @@ public class MediaProcessingWorker(
         // would both lose the curated frame and orphan its blob forever (there is no enumeration to reclaim
         // it). Only make or adopt the auto poster when the item has no custom one.
         var posterName = item.ContentHash + ".jpg";
-        if (item.PosterFileName is null || item.PosterFileName == posterName)
+        if (videoCfg.GeneratePosters && (item.PosterFileName is null || item.PosterFileName == posterName))
         {
             if (await storage.ExistsAsync(posterName, ct))
             {
@@ -234,6 +240,11 @@ public class MediaProcessingWorker(
         // exact files, so putting the names back while leaving the codecs null would keep the H.265
         // rendition on disk and in service but stop the share page from advertising it (it needs both), and
         // report the default lane as never processed.
+        // Apply the global conversion ceiling and persist it, so what we store, serve, and later heal against
+        // all agree. Remux and Off cap any transcoding profile down to AsUploaded; the worker decides
+        // remux-vs-serve-original from the mode, in the AsUploaded branch below.
+        item.Profile = ConversionProfiles.UnderMode(item.Profile, videoCfg.ConversionMode);
+
         var previous = (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs);
         item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
 
@@ -242,8 +253,11 @@ public class MediaProcessingWorker(
         // that fails, serve the raw original. Never transcode - the uploader opted to own compatibility.
         if (item.Profile == ConversionProfile.AsUploaded)
         {
+            // Off serves the original untouched - not even a remux. Remux/Full still stream-copy a container
+            // that needs it (a .mov) into a faststart mp4, codec never re-encoded.
             var keptName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
-            if (!IsProgressiveMp4(item.Extension, originalPath)
+            if (videoCfg.ConversionMode != ConversionMode.Off
+                && !IsProgressiveMp4(item.Extension, originalPath)
                 && await ProduceKeptOriginalAsync(originalPath, keptName, probe.VideoCodec, ct))
             {
                 item.WebFileName = keptName;
@@ -275,7 +289,7 @@ public class MediaProcessingWorker(
         }
         else
         {
-            var settings = ConversionProfiles.Settings(item.Profile, await videoSettings.GetEffectiveAsync(ct));
+            var settings = ConversionProfiles.Settings(item.Profile, videoCfg);
             var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
             var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe, expectedDuration, settings, ct);
             if (produced is null)
