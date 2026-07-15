@@ -239,6 +239,55 @@
                 }
             </dl>
 
+            @if (MediaKinds.Of(Model) == MediaKind.Video && Model.WebCodec is not null)
+            {
+                @* Progressive disclosure: the friendly facts above are for everyone; the numbers a power user
+                   wants - each rendition's size, and the settings that produced them - sit one click down so
+                   the card stays calm. The worker fills these in on the last conversion; an item converted
+                   before this existed shows what it can and records the rest on its next run. *@
+                var srcDims = Format.Dimensions(Model.Width, Model.Height);
+                var webDims = Format.Dimensions(Model.WebWidth ?? Model.Width, Model.WebHeight ?? Model.Height);
+                var pct = Model.WebSizeBytes is { } wsb && Model.SizeBytes > 0
+                    ? $" ({100.0 * wsb / Model.SizeBytes:0}% of original)"
+                    : "";
+                var encoder = Model.WebEncoder switch
+                {
+                    "gpu" => "GPU (h264_vaapi)",
+                    "cpu" => "CPU (libx264)",
+                    "copied" => "stream-copied, no re-encode",
+                    "reused" => "reused an earlier rendition",
+                    _ => "served exactly as uploaded"
+                };
+                // A legacy item (converted before provenance was recorded) has a web file but no encoder
+                // note; don't claim it was served as-is. Show the note only when we actually know.
+                var showEncoded = Model.WebEncoder is not null || Model.WebFileName is null;
+                var qp = Model.WebEncoder == "gpu" ? "QP" : "CRF";
+                <details class="mb-3">
+                    <summary class="small text-secondary" style="cursor:pointer">Technical details</summary>
+                    <dl class="facts mt-2 mb-0">
+                        <dt>Original</dt>
+                        <dd>@Format.Bytes(Model.SizeBytes)@(Model.VideoCodec is not null ? " · " + Model.VideoCodec : "")@(srcDims.Length > 0 ? " · " + srcDims : "")@(Model.SourceIsHdr ? " · HDR" : "")</dd>
+                        <dt>Web (@Model.WebCodec)</dt>
+                        <dd>@(webDims.Length > 0 ? webDims + " · " : "")@(Model.WebSizeBytes is { } wb ? Format.Bytes(wb) : "size not recorded")@pct</dd>
+                        @if (Model.HqCodecs is not null)
+                        {
+                            <dt>Also offered (H.265)</dt>
+                            <dd>@(srcDims.Length > 0 ? srcDims + " · " : "")@(Model.HqSizeBytes is { } hb ? Format.Bytes(hb) : "size not recorded"), taken first where it decodes</dd>
+                        }
+                        @if (showEncoded)
+                        {
+                            <dt>Encoded</dt>
+                            <dd>@encoder@(Model.EncodeCrf is not null ? $" · {qp} {Model.EncodeCrf}" : "")@(Model.EncodePreset is not null ? " · preset " + Model.EncodePreset : "")@(Model.EncodeToneMapped ? " · HDR tone-mapped to SDR" : "")</dd>
+                        }
+                        @if (Model.EncodeMs is > 0)
+                        {
+                            <dt>Took</dt>
+                            <dd>@Format.Duration(Model.EncodeMs.Value / 1000.0)@(Model.DurationSeconds is > 0 ? $" · {Model.DurationSeconds.Value / (Model.EncodeMs.Value / 1000.0):0.0}× realtime" : "")</dd>
+                        }
+                    </dl>
+                </details>
+            }
+
             @* Uploading the same file again with a different setting would do nothing at all - ingestion
                dedups identical bytes and hands back the item that already exists - so without this the
                conversion picker would be a one-shot choice with no way back. *@

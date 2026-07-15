@@ -152,6 +152,49 @@ public class MediaItem : AuditableEntity
     /// <summary>Content-addressed poster/thumbnail (jpg) extracted for the player and OG image.</summary>
     public string? PosterFileName { get; set; }
 
+    // ── Encode provenance ───────────────────────────────────────────────────────────────────────────────
+    // What the last successful conversion actually produced, recorded so the file details view can show it
+    // (and the completion log reports the same facts). Everything here is null/false until an item has been
+    // through the worker under a build that records it; an older item fills it in the next time it is
+    // converted. None of it changes what is served - it only describes it.
+
+    /// <summary>Byte size of the file the default lane serves: the produced <see cref="WebFileName"/>, or the
+    /// original bytes when the upload is served as-is. Null until a conversion records it.</summary>
+    public long? WebSizeBytes { get; set; }
+
+    /// <summary>Byte size of the H.265 sidecar (<see cref="HqFileName"/>), or null when there is none.</summary>
+    public long? HqSizeBytes { get; set; }
+
+    /// <summary>Dimensions of the produced default-lane file. Smaller than the source's <see cref="Width"/>/
+    /// <see cref="Height"/> when the resolution cap applied; equal to them when served as-is. Null until
+    /// recorded.</summary>
+    public int? WebWidth { get; set; }
+    public int? WebHeight { get; set; }
+
+    /// <summary>How the default lane was produced, for the "how it was made" line: <c>gpu</c> (h264_vaapi),
+    /// <c>cpu</c> (libx264), <c>copied</c> (stream-copied into a faststart mp4), or <c>reused</c> (a valid
+    /// rendition already on disk). Null when the upload is served exactly as it came in.</summary>
+    public string? WebEncoder { get; set; }
+
+    /// <summary>The CRF (libx264) or QP (VAAPI) that actually reached the encoder, or null when the lane was
+    /// not re-encoded.</summary>
+    public int? EncodeCrf { get; set; }
+
+    /// <summary>The libx264 preset used, or null for a hardware, stream-copied, or as-is lane (VAAPI takes no
+    /// preset).</summary>
+    public string? EncodePreset { get; set; }
+
+    /// <summary>Whether the source is high dynamic range (a property of its transfer curve), so the details
+    /// view can badge it even for an item that was kept as-is.</summary>
+    public bool SourceIsHdr { get; set; }
+
+    /// <summary>Whether an HDR source was tone-mapped down to SDR while producing the H.264 lane.</summary>
+    public bool EncodeToneMapped { get; set; }
+
+    /// <summary>How long the last conversion took, in milliseconds, for a "took 2m14s" line. Null until
+    /// recorded.</summary>
+    public int? EncodeMs { get; set; }
+
     public MediaStatus Status { get; set; } = MediaStatus.Uploaded;
 
     /// <summary>When this share's public link stops working ("link-off"). Null = never expires (admin

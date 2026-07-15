@@ -284,10 +284,19 @@ public class MediaProcessingWorker(
             // file is a lossless repackage rather than a re-encode. Serving it would convert an upload the
             // owner said to leave alone. The raw original is always the safe, in-spec fallback.
             item.WebCodec = probe.VideoCodec;
+            item.WebSizeBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
+            item.HqSizeBytes = null;
+            item.WebWidth = item.Width;
+            item.WebHeight = item.Height;
+            item.WebEncoder = item.WebFileName is not null ? "copied" : null; // remuxed, or the raw original
+            item.EncodeCrf = null;
+            item.EncodePreset = null;
+            item.SourceIsHdr = probe.IsHdr;
+            item.EncodeToneMapped = false;
+            item.EncodeMs = (int)sw.Elapsed.TotalMilliseconds;
             await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
-            var keptBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
             logger.LogInformation("Kept {Slug} as uploaded in {Seconds:0.0}s: {Codec} {Size} (remuxed={Remuxed})",
-                item.Slug, sw.Elapsed.TotalSeconds, probe.VideoCodec, Format.Bytes(keptBytes ?? 0),
+                item.Slug, sw.Elapsed.TotalSeconds, probe.VideoCodec, Format.Bytes(item.WebSizeBytes ?? 0),
                 item.WebFileName is not null);
             return;
         }
@@ -341,10 +350,21 @@ public class MediaProcessingWorker(
             await ProduceHqAsync(item, probe, originalPath, expectedDuration, ct);
         }
 
+        // Record what came out, before FinishAsync (which is the save), so the file details view can show
+        // the same facts the log line below reports.
+        item.WebSizeBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
+        item.HqSizeBytes = await BlobSizeAsync(item.HqFileName, ct);
+        item.WebWidth = webWidth;
+        item.WebHeight = webHeight;
+        item.WebEncoder = EncoderName(lane);
+        item.EncodeCrf = applied?.Crf;
+        item.EncodePreset = lane == WebLane.Cpu ? applied?.Preset : null;
+        item.SourceIsHdr = probe.IsHdr;
+        item.EncodeToneMapped = toneMapped;
+        item.EncodeMs = (int)sw.Elapsed.TotalMilliseconds;
+
         await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
 
-        var webBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
-        var hqBytes = await BlobSizeAsync(item.HqFileName, ct);
         var how = lane switch
         {
             WebLane.Gpu => "GPU-encoded",
@@ -353,7 +373,9 @@ public class MediaProcessingWorker(
             WebLane.Reused => "reused",
             _ => "served as-is"
         };
-        var ratio = webBytes is { } wb && item.SizeBytes > 0 ? $" ({100.0 * wb / item.SizeBytes:0}% of original)" : "";
+        var ratio = item.WebSizeBytes is { } wb && item.SizeBytes > 0
+            ? $" ({100.0 * wb / item.SizeBytes:0}% of original)"
+            : "";
         var applies = applied is null
             ? ""
             : $", CRF/QP {applied.Crf}" + (lane == WebLane.Cpu ? $" preset {applied.Preset}" : "")
@@ -365,8 +387,8 @@ public class MediaProcessingWorker(
         logger.LogInformation(
             "Converted {Slug} in {Seconds:0.0}s: {How} web {Dims} {WebCodec} {WebSize}{Ratio}, hq {Hq} {HqSize}{Applies}{Speed}",
             item.Slug, sw.Elapsed.TotalSeconds, how, Format.Dimensions(webWidth, webHeight), item.WebCodec,
-            Format.Bytes(webBytes ?? 0), ratio, item.HqCodecs ?? "none",
-            hqBytes is { } hb ? Format.Bytes(hb) : "none", applies, speed);
+            Format.Bytes(item.WebSizeBytes ?? 0), ratio, item.HqCodecs ?? "none",
+            item.HqSizeBytes is { } hb ? Format.Bytes(hb) : "none", applies, speed);
     }
 
     /// <summary>
@@ -662,6 +684,20 @@ public class MediaProcessingWorker(
         {
             LocalBlobServe local => File.Exists(local.Path) ? new FileInfo(local.Path).Length : null,
             RemoteBlobServe remote => remote.Length,
+            _ => null
+        };
+    }
+
+    /// <summary>The stored name for a lane, for <see cref="MediaItem.WebEncoder"/>. Null for served-as-is,
+    /// which has no encoder of its own.</summary>
+    private static string? EncoderName(WebLane lane)
+    {
+        return lane switch
+        {
+            WebLane.Gpu => "gpu",
+            WebLane.Cpu => "cpu",
+            WebLane.Copied => "copied",
+            WebLane.Reused => "reused",
             _ => null
         };
     }
