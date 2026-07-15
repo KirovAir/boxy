@@ -19,8 +19,10 @@ RUN dotnet publish Boxy.Web/Boxy.Web.csproj -c Release -o /app/publish /p:UseApp
 
 # ---- runtime ----
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# Set per target platform by buildx (amd64, arm64, ...). Used below to install the x86-only GPU driver.
+ARG TARGETARCH
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     gosu \
     ffmpeg \
     libheif-examples \
@@ -29,6 +31,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -g 888 appgroup \
     && useradd -u 888 -g 888 -d /data -s /bin/false appuser \
     && usermod -G users appuser
+
+# Hardware video encoding (VAAPI) - amd64 only. Intel GPUs are x86, so the drivers exist only on amd64; on
+# arm64 there's no Intel GPU and Boxy runs on the CPU (as it does whenever no usable GPU is found). apt
+# skips the driver under --no-install-recommends, which is why ffmpeg had libva but nothing to load and
+# VAAPI init failed with "unknown libva error". The base image is Ubuntu, where the Intel stack is in the
+# already-enabled universe repo (no non-free/multiverse dance): iHD (intel-media-va-driver, current for
+# Gen8+ incl. Gemini Lake) covers H.264 encode; i965 is the legacy Gen4-8 driver. libva picks the right one
+# by PCI id; `vainfo` confirms it (VAEntrypointEncSlice = encode).
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+         intel-media-va-driver i965-va-driver libva2 libva-drm2 vainfo \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 WORKDIR /app
 
