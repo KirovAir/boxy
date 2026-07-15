@@ -124,6 +124,25 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-body">
+        <h2 class="h6 mb-1">Shared view</h2>
+        <p class="text-secondary small mb-3">By default each visitor sees only the files they dropped in. Turn
+            this on to make the box a shared gallery: everyone with the link gets an "Everyone's uploads" list and
+            can preview and download what others dropped. Deleting always stays limited to whoever uploaded a file
+            (and you).</p>
+        <form method="post" action="/dashboard/buckets/@Model.Bucket.Id/sharing">
+            @Html.AntiForgeryToken()
+            <div class="form-check form-switch mb-3">
+                <input type="checkbox" name="sharedView" value="true" class="form-check-input" id="sharedview"
+                       role="switch" @(Model.Bucket.SharedView ? "checked" : "")/>
+                <label class="form-check-label" for="sharedview">Let visitors see everyone's uploads</label>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
+    </div>
+</div>
+
 @{
     // "Filtered" means the list is narrowed by anything - a type chip or an uploader - so the empty
     // state, the download-all count, and the toolbar visibility all react to the uploader filter too.

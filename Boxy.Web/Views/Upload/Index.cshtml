@@ -69,6 +69,21 @@
             </ul>
         </div>
 
+        @* Shared-view boxes only: everyone else's finished uploads, read-only, under the visitor's own.
+           Server-rendered, so a newly dropped file from another visitor shows on their next page load. *@
+        @if (Model.SharedItems.Count > 0)
+        {
+            <div id="sharedSection">
+                <h2 class="h6 text-secondary text-uppercase mt-4 mb-2">Everyone's uploads</h2>
+                <ul class="list-group">
+                    @foreach (var m in Model.SharedItems)
+                    {
+                        <partial name="_SharedRow" model="new SharedRowVm(m)"/>
+                    }
+                </ul>
+            </div>
+        }
+
         <script src="/js/boxy.js" asp-append-version="true"></script>
         <script src="/js/upload.js" asp-append-version="true"></script>
     }

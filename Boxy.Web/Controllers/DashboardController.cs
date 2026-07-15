@@ -242,6 +242,28 @@ public class DashboardController(
         return RedirectToAction(nameof(Bucket), new { id });
     }
 
+    // Open a box up into a shared gallery, or close it back to private-per-uploader. When on, every
+    // visitor sees an "everyone's uploads" list on the drop-off page and can preview and download what
+    // others dropped in; deleting stays limited to the uploader (and the owner) regardless. Owner-only.
+    [HttpPost("buckets/{id:int}/sharing")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SetSharing(int id, bool sharedView, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var box = await db.Buckets.FirstOrDefaultAsync(b => b.Id == id && b.OwnerId == UserId, ct);
+        if (box is null)
+        {
+            return RedirectToAction(nameof(Bucket), new { id });
+        }
+
+        box.SharedView = sharedView;
+        await db.SaveChangesAsync(ct);
+        this.FlashSuccess(sharedView
+            ? "Shared view is on. Everyone with the link now sees and can download every file in this box."
+            : "Shared view is off. Each visitor sees only the files they dropped in.");
+        return RedirectToAction(nameof(Bucket), new { id });
+    }
+
     /// <summary>Turn an uploader-chip <c>code</c> (a one-way hash, safe in a URL) back into the actual
     /// <c>UploaderToken</c> to filter by - matched only against the distinct uploaders of this very box,
     /// so the token is never accepted from, nor echoed to, the client. Returns null when the code is

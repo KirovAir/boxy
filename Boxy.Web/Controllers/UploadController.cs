@@ -56,6 +56,18 @@ public class UploadController(
             .Take(200)
             .ToListAsync();
 
+        // A shared-view box shows everyone ELSE's finished uploads too. Ready-only, so a half-processed
+        // file from another visitor never appears; the visitor's own (any status) stay in "Your uploads"
+        // above. Null-token items (dropped by the owner) count as "everyone else's" and are included.
+        var shared = bucket.SharedView
+            ? await db.MediaItems.AsNoTracking()
+                .Where(m => m.BucketId == bucket.Id && m.Status == MediaStatus.Ready
+                                                    && (m.UploaderToken == null || m.UploaderToken != token))
+                .OrderByDescending(m => m.CreatedDate)
+                .Take(200)
+                .ToListAsync()
+            : [];
+
         return View(new UploadPageViewModel
         {
             BucketName = bucket.Name,
@@ -63,6 +75,7 @@ public class UploadController(
             IsOpen = bucket.IsOpen,
             UploadedCount = ok,
             MyUploads = mine,
+            SharedItems = shared,
             MaxBytes = await MaxUploadBytesAsync(bucket)
         });
     }

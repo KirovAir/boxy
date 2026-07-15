@@ -44,8 +44,9 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         }
 
         // Downloading the original is opt-in per share (off by default) so previewable media stays in
-        // Boxy. Enforce it on the endpoint too, not just the hidden button - the owner always may.
-        if (download != 0 && !CanManage(item))
+        // Boxy. Enforce it on the endpoint too, not just the hidden button - the owner always may, and so
+        // may any visitor to a shared-view box, which its owner explicitly opened up for exactly this.
+        if (download != 0 && !CanManage(item) && !SharedBoxVisible(item))
         {
             var kind = MediaKinds.Of(item.Extension, item.VideoCodec is not null, item.WebFileName is not null);
             if (!MediaKinds.CanDownloadOriginal(item.AllowDownload, kind))
@@ -145,6 +146,19 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
                && Request.Cookies.TryGetValue(UploaderCookie.Name, out var anon) && anon == item.UploaderToken;
     }
 
+    /// <summary>True for a finished drop-off in a box its owner has opened into a shared gallery
+    /// (<see cref="Bucket.SharedView"/>): while the box is live, ANY visitor may preview and download it,
+    /// exactly as the owner chose. Gated on Ready so an in-flight rendition swap can't corrupt a range
+    /// request, and on the box being unexpired so a link-off box goes dark for everyone at once. Requires
+    /// <c>Bucket</c> to be loaded. Never applies to a public share (those have no BucketId).</summary>
+    private static bool SharedBoxVisible(MediaItem item)
+    {
+        return item.BucketId is not null
+               && item.Bucket is { SharedView: true }
+               && item.Status == MediaStatus.Ready
+               && !Retention.IsExpired(item.Bucket.ExpiresAt, DateTime.UtcNow);
+    }
+
     // Lightweight polling endpoint so the uploader's "your uploads" row can flip from
     // "processing" to a thumbnail without a page reload. Visible to the owner (cookie).
     [HttpGet("/api/media/{slug}/status")]
@@ -242,10 +256,12 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
             return null;
         }
 
-        // Visible when it's a published, unexpired public share (never a bucket drop-off), or to whoever
-        // may manage it (share owner, box owner, or the anonymous uploader) - the owner keeps byte access
-        // during the grace window so the dashboard can still show and restore an expired item.
+        // Visible when it's a published, unexpired public share (never a bucket drop-off), when its box is
+        // a shared gallery anyone with the link may browse, or to whoever may manage it (share owner, box
+        // owner, or the anonymous uploader) - the owner keeps byte access during the grace window so the
+        // dashboard can still show and restore an expired item.
         return Retention.IsPubliclyVisible(item.BucketId, item.Published, item.ExpiresAt, DateTime.UtcNow)
+               || SharedBoxVisible(item)
                || CanManage(item)
             ? item
             : null;

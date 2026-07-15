@@ -1,0 +1,45 @@
+@model SharedRowVm
+@{
+    var m = Model.Item;
+    var kind = MediaKinds.FacetOf(m.Extension);
+    var lightbox = MediaKinds.LightboxKind(m);
+    var who = UploaderIdentity.For(m.UploaderToken);
+}
+@* Someone else's file in a shared-view box. Read-only: the delete action of _MineRow is replaced by the
+   uploader's chip and a download link. data-lightbox lets boxy.js open the preview on a row click, while
+   the download link (an <a>) is left to work normally. *@
+<li class="list-group-item drop-row d-flex align-items-center gap-3" data-lightbox data-slug="@m.Slug"
+    data-kind="@lightbox">
+    @if (m.PosterFileName is not null)
+    {
+        <img src="/poster/@m.Slug?v=@m.PosterVersion()" class="film-thumb" alt="" width="80" height="48"
+             style="object-fit:cover;" loading="lazy"/>
+    }
+    else
+    {
+        <partial name="_FileIcon" model="(kind, m.Extension)"/>
+    }
+    <span class="flex-grow-1 text-truncate">
+        <span class="d-block text-truncate">@m.Title</span>
+        <span class="small text-secondary mono d-block text-truncate">
+            @m.Kind.ToString().ToUpperInvariant()
+            <text>· @Format.Bytes(m.SizeBytes)</text>
+            @if (Format.Dimensions(m.Width, m.Height) is { Length: > 0 } dim)
+            {
+                <text>· @dim</text>
+            }
+            @if ((m.Kind == MediaKind.Video || m.Kind == MediaKind.Audio)
+                 && Format.Duration(m.DurationSeconds) is { Length: > 0 } dur)
+            {
+                <text>· @dur</text>
+            }
+            @if (who is not null)
+            {
+                <span class="up-chip up-chip--static ms-1">
+                    <span class="up-dot" style="background:@who.Color"></span>@who.Name
+                </span>
+            }
+        </span>
+    </span>
+    <a class="btn btn-sm btn-outline-secondary" href="/f/@m.Slug?download=1" title="Download this file">Download</a>
+</li>

@@ -45,6 +45,13 @@ public class Bucket : AuditableEntity
     /// owner - so this is where the owner makes it once.</summary>
     public ConversionProfile? DefaultProfile { get; set; }
 
+    /// <summary>When true, the box is a shared gallery: every visitor sees an "everyone's uploads" list
+    /// under their own and can preview and download what others dropped in. Default false, which is the
+    /// historical behaviour - each visitor sees only the files they themselves dropped (matched by their
+    /// <c>boxy_uid</c> cookie). This is the owner's explicit, per-box opt-in to open a box up; deleting
+    /// always stays limited to whoever uploaded a file (and the owner), whatever this is set to.</summary>
+    public bool SharedView { get; set; }
+
     /// <summary>The account that owns this box.</summary>
     public int OwnerId { get; set; }
 
