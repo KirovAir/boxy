@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Boxy.Data;
 using Boxy.Data.Entities;
 using Boxy.Web.Models;
@@ -114,6 +115,8 @@ public class MediaProcessingWorker(
 
     private async Task ProcessAsync(int id, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
+
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var item = await db.MediaItems.FirstOrDefaultAsync(m => m.Id == id, ct);
         if (item is null)
@@ -245,6 +248,16 @@ public class MediaProcessingWorker(
         // remux-vs-serve-original from the mode, in the AsUploaded branch below.
         item.Profile = ConversionProfiles.UnderMode(item.Profile, videoCfg.ConversionMode);
 
+        // What we're about to do, up front: the old log went silent from here until the item was done, so a
+        // conversion that was slow or stuck looked identical to one that never started. The completion line
+        // below reports what actually came out (sizes, encoder, elapsed).
+        logger.LogInformation(
+            "Converting {Slug} \"{Title}\": {Codec}{Hdr} {Dims}, {Size}, {Profile} profile{Encoder}{Queued}",
+            item.Slug, item.Title, probe.VideoCodec, probe.IsHdr ? " HDR" : "",
+            Format.Dimensions(item.Width, item.Height), Format.Bytes(item.SizeBytes), item.Profile,
+            ConversionProfiles.Transcodes(item.Profile) ? $", {videoCfg.Encoder} encoder" : "",
+            queue.Depth > 0 ? $" ({queue.Depth} more queued)" : "");
+
         var previous = (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs);
         item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
 
@@ -272,8 +285,10 @@ public class MediaProcessingWorker(
             // owner said to leave alone. The raw original is always the safe, in-spec fallback.
             item.WebCodec = probe.VideoCodec;
             await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
-            logger.LogInformation("Processed {Slug} as uploaded, codec {Codec} (remuxed={Remuxed})",
-                item.Slug, probe.VideoCodec, item.WebFileName is not null);
+            var keptBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
+            logger.LogInformation("Kept {Slug} as uploaded in {Seconds:0.0}s: {Codec} {Size} (remuxed={Remuxed})",
+                item.Slug, sw.Elapsed.TotalSeconds, probe.VideoCodec, Format.Bytes(keptBytes ?? 0),
+                item.WebFileName is not null);
             return;
         }
 
@@ -283,6 +298,14 @@ public class MediaProcessingWorker(
         // Everything else (.mov, non-faststart mp4, .mkv/.webm, VP9/AV1, 10-bit, and now H.265) gets one.
         var copyable = MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
         var serveAsIs = copyable && IsProgressiveMp4(item.Extension, originalPath);
+
+        // How the default lane got made, for the completion log below. Defaults suit the serve-as-is case:
+        // no re-encode, and the served file keeps the source's own dimensions.
+        var lane = WebLane.ServedAsIs;
+        VideoSettings? applied = null;
+        var toneMapped = false;
+        int? webWidth = item.Width, webHeight = item.Height;
+
         if (serveAsIs)
         {
             item.WebCodec = probe.VideoCodec;
@@ -303,7 +326,12 @@ public class MediaProcessingWorker(
             }
 
             item.WebFileName = webName;
-            item.WebCodec = produced.VideoCodec;
+            item.WebCodec = produced.Probe.VideoCodec;
+            lane = produced.Lane;
+            applied = produced.Applied;
+            toneMapped = produced.ToneMapped;
+            webWidth = produced.Probe.Width;
+            webHeight = produced.Probe.Height;
         }
 
         // The better rendition, offered ahead of the H.264 file and skipped by anything that can't decode
@@ -314,9 +342,31 @@ public class MediaProcessingWorker(
         }
 
         await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
-        logger.LogInformation("Processed {Slug}: {W}x{H}, servedAsIs={AsIs}, web={Web} ({WebCodec}), hq={Hq}",
-            item.Slug, item.Width, item.Height, serveAsIs, item.WebFileName ?? "original", item.WebCodec,
-            item.HqCodecs ?? "none");
+
+        var webBytes = item.WebFileName is null ? item.SizeBytes : await BlobSizeAsync(item.WebFileName, ct);
+        var hqBytes = await BlobSizeAsync(item.HqFileName, ct);
+        var how = lane switch
+        {
+            WebLane.Gpu => "GPU-encoded",
+            WebLane.Cpu => "CPU-encoded",
+            WebLane.Copied => "stream-copied",
+            WebLane.Reused => "reused",
+            _ => "served as-is"
+        };
+        var ratio = webBytes is { } wb && item.SizeBytes > 0 ? $" ({100.0 * wb / item.SizeBytes:0}% of original)" : "";
+        var applies = applied is null
+            ? ""
+            : $", CRF/QP {applied.Crf}" + (lane == WebLane.Cpu ? $" preset {applied.Preset}" : "")
+              + (applied.MaxLongEdge > 0 ? $", capped {applied.MaxLongEdge}px" : "") + (toneMapped ? ", HDR tone-mapped" : "");
+        var speed = expectedDuration is > 0 && sw.Elapsed.TotalSeconds > 0.1
+            ? $", {expectedDuration.Value / sw.Elapsed.TotalSeconds:0.0}x realtime"
+            : "";
+
+        logger.LogInformation(
+            "Converted {Slug} in {Seconds:0.0}s: {How} web {Dims} {WebCodec} {WebSize}{Ratio}, hq {Hq} {HqSize}{Applies}{Speed}",
+            item.Slug, sw.Elapsed.TotalSeconds, how, Format.Dimensions(webWidth, webHeight), item.WebCodec,
+            Format.Bytes(webBytes ?? 0), ratio, item.HqCodecs ?? "none",
+            hqBytes is { } hb ? Format.Bytes(hb) : "none", applies, speed);
     }
 
     /// <summary>
@@ -355,7 +405,7 @@ public class MediaProcessingWorker(
     /// through to a transcode and a bad transcode fails cleanly instead of serving a broken file. Returns the
     /// probe of what was produced, or null when nothing servable could be made.
     /// </summary>
-    private async Task<ProbeResult?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
+    private async Task<WebProvenance?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
         ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct)
     {
         // Reuse a valid web file from an earlier run / another item with identical content. The codec set
@@ -367,7 +417,7 @@ public class MediaProcessingWorker(
             if (existing is not null
                 && await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.UniversalCodecs, ct) is { } reused)
             {
-                return reused;
+                return new WebProvenance(reused, WebLane.Reused, null, false);
             }
         }
 
@@ -381,17 +431,21 @@ public class MediaProcessingWorker(
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } remuxed)
             {
                 await storage.PutAsync(webName, scratch, ct);
-                return remuxed;
+                return new WebProvenance(remuxed, WebLane.Copied, null, false);
             }
 
             TryDeleteLocal(scratch);
 
-            // Universal fallback: full transcode to H.264/AAC mp4.
-            if (await processor.TranscodeWebAsync(originalPath, scratch, settings, capabilities.ForEncoding(), probe.IsHdr, ct)
+            // Universal fallback: full transcode to H.264/AAC mp4. TranscodeWebAsync reports the encoder that
+            // actually ran (it can fall back from GPU to CPU), so the provenance records what really happened.
+            var caps = capabilities.ForEncoding();
+            var encoder = await processor.TranscodeWebAsync(originalPath, scratch, settings, caps, probe.IsHdr, ct);
+            if (encoder is { } used
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } encoded)
             {
                 await storage.PutAsync(webName, scratch, ct);
-                return encoded;
+                var lane = used == VideoEncoder.Hardware ? WebLane.Gpu : WebLane.Cpu;
+                return new WebProvenance(encoded, lane, settings.Normalized(), probe.IsHdr && caps.CanToneMap);
             }
 
             return null;
@@ -593,4 +647,38 @@ public class MediaProcessingWorker(
         await db.SaveChangesAsync(ct);
         logger.LogWarning("Media {Slug} failed: {Message}", item.Slug, message);
     }
+
+    /// <summary>The stored byte size of a rendition, read straight from the backend (a local file stat, or a
+    /// remote HEAD via the serve descriptor), or null when there is no such blob. Best-effort: it feeds the
+    /// log line and the file details, so a null just shows as unknown rather than failing the conversion.</summary>
+    private async Task<long?> BlobSizeAsync(string? fileName, CancellationToken ct)
+    {
+        if (fileName is null)
+        {
+            return null;
+        }
+
+        return await storage.GetServeAsync(fileName, ct) switch
+        {
+            LocalBlobServe local => File.Exists(local.Path) ? new FileInfo(local.Path).Length : null,
+            RemoteBlobServe remote => remote.Length,
+            _ => null
+        };
+    }
+
+    /// <summary>How the default (H.264) lane's served file came to be, for the conversion log and the file
+    /// details view.</summary>
+    private enum WebLane
+    {
+        ServedAsIs, // an already web-safe upload, served untouched
+        Copied, // stream-copied (remuxed) into a faststart mp4, codec unchanged
+        Cpu, // transcoded with libx264
+        Gpu, // transcoded with h264_vaapi
+        Reused // an earlier valid rendition on disk was kept (dedup / heal)
+    }
+
+    /// <summary>What producing the default lane yielded: the probe of the produced file, how it was made, the
+    /// settings that actually reached the encoder (null when nothing was re-encoded), and whether an HDR
+    /// source was tone-mapped down to SDR.</summary>
+    private sealed record WebProvenance(ProbeResult Probe, WebLane Lane, VideoSettings? Applied, bool ToneMapped);
 }

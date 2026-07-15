@@ -20,6 +20,10 @@ public class MediaProcessingQueue
     // genuinely something to do, then picks the lane itself.
     private readonly SemaphoreSlim waiting = new(0);
 
+    /// <summary>How many items are waiting across both lanes right now (the one being worked on has already
+    /// been dequeued, so it is not counted). For a "still N queued" note when a conversion starts.</summary>
+    public int Depth => uploads.Count + backfill.Count;
+
     /// <summary>A just-uploaded item someone is waiting on. Jumps the backfill.</summary>
     public void Enqueue(int mediaItemId)
     {

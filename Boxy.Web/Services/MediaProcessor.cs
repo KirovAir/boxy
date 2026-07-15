@@ -326,8 +326,12 @@ public class MediaProcessor(
     /// permissions and container passthrough, and a video that cannot be encoded is a video nobody can
     /// watch. Falling back means the worst case of turning hardware on is exactly the behaviour of leaving
     /// it off, one wasted attempt later.
+    ///
+    /// Returns the encoder that actually produced the file (<see cref="VideoEncoder.Hardware"/> or, after a
+    /// fallback, <see cref="VideoEncoder.Software"/>), or null when nothing could be produced - so the
+    /// caller can record and log which one ran rather than guessing from the settings that were requested.
     /// </summary>
-    public async Task<bool> TranscodeWebAsync(string input, string output, VideoSettings settings,
+    public async Task<VideoEncoder?> TranscodeWebAsync(string input, string output, VideoSettings settings,
         EncoderCapabilities caps, bool sourceIsHdr, CancellationToken ct = default)
     {
         var onGpu = settings.Normalized().Encoder == VideoEncoder.Hardware && caps.CanEncodeOnGpu;
@@ -338,7 +342,7 @@ public class MediaProcessor(
                 TranscodeArgs(input, hw, settings, caps, sourceIsHdr), TranscodeTimeout, ct);
             if (Finalize(hwCode, hw, output))
             {
-                return true;
+                return VideoEncoder.Hardware;
             }
 
             logger.LogWarning("Hardware encode failed for {Path}, falling back to the CPU: {Err}", input, Tail(hwErr));
@@ -360,7 +364,7 @@ public class MediaProcessor(
             logger.LogError("Transcode failed for {Path}: {Err}", input, Tail(err));
         }
 
-        return Finalize(code, tmp, output);
+        return Finalize(code, tmp, output) ? VideoEncoder.Software : null;
     }
 
     /// <summary>
@@ -673,6 +677,10 @@ public class MediaProcessor(
                 CreateNoWindow = true
             }
         };
+
+        // The full command line, for when a conversion needs debugging. Only at Debug: on a busy instance
+        // every probe, poster and remux runs through here, so it would drown the Information log otherwise.
+        logger.LogDebug("Running {Exe} {Args}", exe, args);
 
         proc.Start();
         var stdoutTask = proc.StandardOutput.ReadToEndAsync(CancellationToken.None);
