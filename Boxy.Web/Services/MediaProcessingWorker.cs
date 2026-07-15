@@ -18,6 +18,7 @@ public class MediaProcessingWorker(
     FfmpegCapabilities capabilities,
     FileMetadataExtractor metadata,
     MediaProcessingQueue queue,
+    ConversionProgress progress,
     ILogger<MediaProcessingWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -47,6 +48,12 @@ public class MediaProcessingWorker(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Unhandled error processing media {Id}", id);
+            }
+            finally
+            {
+                // However it ended - done, failed, or crashed - this item is no longer in flight, so its
+                // live progress goes away. One place, so no exit path inside ProcessAsync can leak an entry.
+                progress.Clear(id);
             }
         }
     }
@@ -213,6 +220,14 @@ public class MediaProcessingWorker(
         // format.duration can be inflated by tracks we deliberately drop with -map).
         var expectedDuration = probe.VideoDuration ?? probe.Duration;
 
+        // The worker has this video now, so give the polling UI something to show. Preparing covers the
+        // probe and poster; the encode below reports Converting with a real percentage against the source
+        // length. The entry is cleared centrally when the item leaves the pipeline (see ExecuteAsync).
+        progress.Report(id, ConversionStage.Preparing);
+
+        void ReportConverting(FfmpegProgress p) =>
+            progress.Report(id, ConversionStage.Converting, Percent(p.OutTime, expectedDuration), p.Speed);
+
         // Poster frame (best-effort; a missing poster is not fatal). A reprocess (Convert again, or a heal)
         // must NOT touch a custom thumbnail the owner uploaded in Edit: it is stored under its own bytes'
         // hash, not the video's, so regenerating the auto {hash}.jpg here and reassigning PosterFileName
@@ -271,7 +286,7 @@ public class MediaProcessingWorker(
             var keptName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
             if (videoCfg.ConversionMode != ConversionMode.Off
                 && !IsProgressiveMp4(item.Extension, originalPath)
-                && await ProduceKeptOriginalAsync(originalPath, keptName, probe.VideoCodec, ct))
+                && await ProduceKeptOriginalAsync(originalPath, keptName, probe.VideoCodec, ct, ReportConverting))
             {
                 item.WebFileName = keptName;
             }
@@ -323,7 +338,7 @@ public class MediaProcessingWorker(
         {
             var settings = ConversionProfiles.Settings(item.Profile, videoCfg);
             var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
-            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe, expectedDuration, settings, ct);
+            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe, expectedDuration, settings, ct, ReportConverting);
             if (produced is null)
             {
                 // Never take a live, published video offline because a reprocess failed - leave it serving
@@ -342,6 +357,9 @@ public class MediaProcessingWorker(
             webWidth = produced.Probe.Width;
             webHeight = produced.Probe.Height;
         }
+
+        // The default lane is produced; the remaining work (the H.265 sidecar, then saving) is Finishing.
+        progress.Report(id, ConversionStage.Finishing);
 
         // The better rendition, offered ahead of the H.264 file and skipped by anything that can't decode
         // it. Only "Best" pays the extra file for it, and only an H.265 source has anything to give.
@@ -428,7 +446,8 @@ public class MediaProcessingWorker(
     /// probe of what was produced, or null when nothing servable could be made.
     /// </summary>
     private async Task<WebProvenance?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
-        ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct)
+        ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct,
+        Action<FfmpegProgress>? onProgress = null)
     {
         // Reuse a valid web file from an earlier run / another item with identical content. The codec set
         // is what makes this safe across the H.265 change: an -h264.mp4 that somehow isn't H.264 is
@@ -449,7 +468,7 @@ public class MediaProcessingWorker(
             // Lossless remux when the source is already H.264 + AAC/MP3/none and only the container is
             // wrong (a .mov, or an mp4 with its moov atom at the end).
             if (copyable
-                && await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct)
+                && await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct, onProgress)
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } remuxed)
             {
                 await storage.PutAsync(webName, scratch, ct);
@@ -461,7 +480,7 @@ public class MediaProcessingWorker(
             // Universal fallback: full transcode to H.264/AAC mp4. TranscodeWebAsync reports the encoder that
             // actually ran (it can fall back from GPU to CPU), so the provenance records what really happened.
             var caps = capabilities.ForEncoding();
-            var encoder = await processor.TranscodeWebAsync(originalPath, scratch, settings, caps, probe.IsHdr, ct);
+            var encoder = await processor.TranscodeWebAsync(originalPath, scratch, settings, caps, probe.IsHdr, ct, onProgress);
             if (encoder is { } used
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } encoded)
             {
@@ -548,7 +567,8 @@ public class MediaProcessingWorker(
     /// reuses) a faststart mp4 by stream-copy, codec untouched. Returns false when even the remux
     /// fails, so the caller serves the raw original. No codec restriction; the uploader owns playback.
     /// </summary>
-    private async Task<bool> ProduceKeptOriginalAsync(string originalPath, string webName, string? videoCodec, CancellationToken ct)
+    private async Task<bool> ProduceKeptOriginalAsync(string originalPath, string webName, string? videoCodec,
+        CancellationToken ct, Action<FfmpegProgress>? onProgress = null)
     {
         // Reuse a valid faststart mp4 from an earlier run / another item with identical content.
         if (await storage.ExistsAsync(webName, ct))
@@ -563,7 +583,7 @@ public class MediaProcessingWorker(
         var scratch = ScratchOut(".mp4");
         try
         {
-            if (await processor.RemuxFastStartAsync(originalPath, scratch, videoCodec, ct)
+            if (await processor.RemuxFastStartAsync(originalPath, scratch, videoCodec, ct, onProgress)
                 && MediaProcessor.IsFastStartMp4(scratch))
             {
                 await storage.PutAsync(webName, scratch, ct);
@@ -697,6 +717,14 @@ public class MediaProcessingWorker(
             logger.LogWarning(ex, "Could not read the size of {File}; recording it as unknown", fileName);
             return null;
         }
+    }
+
+    /// <summary>How far an encode is, as a whole-number percent of the source length, or null when the
+    /// duration is unknown or implausibly short (the UI shows an indeterminate bar then). The store clamps
+    /// to 0-100, so a slightly-long output can't overshoot.</summary>
+    private static int? Percent(TimeSpan outTime, double? durationSeconds)
+    {
+        return durationSeconds is > 0.5 ? (int)(outTime.TotalSeconds / durationSeconds.Value * 100) : null;
     }
 
     /// <summary>The stored name for a lane, for <see cref="MediaItem.WebEncoder"/>. Null for served-as-is,

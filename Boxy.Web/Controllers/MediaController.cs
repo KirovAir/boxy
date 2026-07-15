@@ -11,7 +11,8 @@ namespace Boxy.Web.Controllers;
 /// seeking works) and the poster at <c>/poster/{slug}</c>. Files are served inline; there is
 /// deliberately no download endpoint.
 /// </summary>
-public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobStore storage, ShareUnlock unlock) : Controller
+public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobStore storage, ShareUnlock unlock,
+    ConversionProgress progress) : Controller
 {
     // A published share with a password stays invisible to the public until unlocked; the owner or the
     // anonymous uploader (CanManage) always passes.
@@ -170,12 +171,19 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
             return NotFound();
         }
 
+        // Live conversion progress rides along on the same poll, so the edit page can show a bar without a
+        // second request or any realtime channel. Null unless something is queued or running for this item
+        // (including a "convert again" on an item that stays Ready throughout).
+        var snapshot = progress.Get(item.Id);
         return Json(new
         {
             status = item.Status.ToString(),
             ready = item.Status == MediaStatus.Ready,
             failed = item.Status == MediaStatus.Failed,
-            poster = item.PosterFileName is not null
+            poster = item.PosterFileName is not null,
+            progress = snapshot is { } s
+                ? new { stage = s.Stage.ToString().ToLowerInvariant(), percent = s.Percent, speed = s.Speed }
+                : null
         });
     }
 

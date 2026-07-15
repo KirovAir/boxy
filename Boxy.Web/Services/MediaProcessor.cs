@@ -332,14 +332,15 @@ public class MediaProcessor(
     /// caller can record and log which one ran rather than guessing from the settings that were requested.
     /// </summary>
     public async Task<VideoEncoder?> TranscodeWebAsync(string input, string output, VideoSettings settings,
-        EncoderCapabilities caps, bool sourceIsHdr, CancellationToken ct = default)
+        EncoderCapabilities caps, bool sourceIsHdr, CancellationToken ct = default,
+        Action<FfmpegProgress>? onProgress = null)
     {
         var onGpu = settings.Normalized().Encoder == VideoEncoder.Hardware && caps.CanEncodeOnGpu;
         if (onGpu)
         {
             var hw = ScratchPath(output);
             var (hwCode, _, hwErr) = await RunAsync(FfmpegPath,
-                TranscodeArgs(input, hw, settings, caps, sourceIsHdr), TranscodeTimeout, ct);
+                TranscodeArgs(input, hw, settings, caps, sourceIsHdr), TranscodeTimeout, ct, onProgress);
             if (Finalize(hwCode, hw, output))
             {
                 return VideoEncoder.Hardware;
@@ -358,7 +359,7 @@ public class MediaProcessor(
 
         var tmp = ScratchPath(output);
         var (code, _, err) = await RunAsync(FfmpegPath,
-            TranscodeArgs(input, tmp, software, caps, sourceIsHdr), TranscodeTimeout, ct);
+            TranscodeArgs(input, tmp, software, caps, sourceIsHdr), TranscodeTimeout, ct, onProgress);
         if (code != 0)
         {
             logger.LogError("Transcode failed for {Path}: {Err}", input, Tail(err));
@@ -420,7 +421,7 @@ public class MediaProcessor(
         {
             var rate = v.MaxrateKbps > 0 ? $"-maxrate {v.MaxrateKbps}k -bufsize {v.MaxrateKbps * 2}k " : "";
             return
-                $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? "
+                $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? "
                 + $"-vf \"{string.Join(',', filters)}\" "
                 + $"-c:v libx264 -preset {v.Preset} -crf {v.Crf} {rate}-profile:v high -pix_fmt yuv420p "
                 + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
@@ -436,7 +437,7 @@ public class MediaProcessor(
         // same number means something different here than it does to x264 - the settings page says so
         // rather than pretending the two are comparable. No -maxrate: it is ignored under CQP.
         return
-            $"-nostdin -hide_banner -nostats -loglevel error -y -vaapi_device {caps.VaapiDevice} "
+            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -vaapi_device {caps.VaapiDevice} "
             + $"-i \"{input}\" -map 0:v:0 -map 0:a:0? "
             + $"-vf \"{string.Join(',', filters)}\" "
             + $"-c:v h264_vaapi -rc_mode CQP -qp {v.Crf} -profile:v high "
@@ -445,14 +446,15 @@ public class MediaProcessor(
 
     /// <summary>Remux (no re-encode) into a real mp4 container with the moov atom up front. Takes the
     /// first video + first audio track only (drops timecode/data tracks that can break the mux).</summary>
-    public async Task<bool> RemuxFastStartAsync(string input, string output, string? videoCodec = null, CancellationToken ct = default)
+    public async Task<bool> RemuxFastStartAsync(string input, string output, string? videoCodec = null,
+        CancellationToken ct = default, Action<FfmpegProgress>? onProgress = null)
     {
         var tmp = ScratchPath(output);
         // HEVC in mp4 must carry the hvc1 tag or Safari/QuickTime refuse it (some encoders write hev1).
         var tag = videoCodec == "hevc" ? "-tag:v hvc1 " : "";
         var (code, _, err) = await RunAsync(FfmpegPath,
-            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -c copy {tag}-movflags +faststart -f mp4 \"{tmp}\"",
-            TranscodeTimeout, ct);
+            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -c copy {tag}-movflags +faststart -f mp4 \"{tmp}\"",
+            TranscodeTimeout, ct, onProgress);
         if (code != 0)
         {
             logger.LogWarning("Faststart remux failed for {Path}: {Err}", input, Tail(err));
@@ -663,7 +665,7 @@ public class MediaProcessor(
     }
 
     private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
-        string exe, string args, TimeSpan timeout, CancellationToken ct)
+        string exe, string args, TimeSpan timeout, CancellationToken ct, Action<FfmpegProgress>? onProgress = null)
     {
         using var proc = new Process
         {
@@ -683,7 +685,12 @@ public class MediaProcessor(
         logger.LogDebug("Running {Exe} {Args}", exe, args);
 
         proc.Start();
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        // stderr is always drained whole (its tail is the error message on failure). stdout is either read
+        // whole, or - when the caller wants live progress and the command carries `-progress pipe:1` -
+        // streamed line by line so each block turns into a callback while the encode is still running.
+        var stdoutTask = onProgress is null
+            ? proc.StandardOutput.ReadToEndAsync(CancellationToken.None)
+            : DrainProgressAsync(proc.StandardOutput, onProgress);
         var stderrTask = proc.StandardError.ReadToEndAsync(CancellationToken.None);
 
         // Bound the run: link the caller's token (app shutdown) with a per-operation timeout so a
@@ -740,6 +747,32 @@ public class MediaProcessor(
         }
 
         return (proc.ExitCode, stdout, stderr);
+    }
+
+    /// <summary>Reads ffmpeg's <c>-progress pipe:1</c> stdout line by line, turning each completed block into
+    /// a callback while the encode runs. Returns "" - the progress stream is consumed, not kept. A throwing
+    /// callback is swallowed: progress is best-effort and must never fail the encode producing it. Ends when
+    /// the process closes stdout (normal exit, or a kill on timeout/shutdown).</summary>
+    private static async Task<string> DrainProgressAsync(StreamReader stdout, Action<FfmpegProgress> onProgress)
+    {
+        var parser = new FfmpegProgressParser();
+        string? line;
+        while ((line = await stdout.ReadLineAsync()) is not null)
+        {
+            if (parser.Feed(line) is { } snapshot)
+            {
+                try
+                {
+                    onProgress(snapshot);
+                }
+                catch
+                {
+                    /* best-effort: a progress hiccup must not sink the conversion */
+                }
+            }
+        }
+
+        return "";
     }
 
     /// <summary>A unique scratch path next to <paramref name="output"/> (same directory, so the final

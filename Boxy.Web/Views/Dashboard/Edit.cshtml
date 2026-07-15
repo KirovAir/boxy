@@ -200,6 +200,27 @@
     <div class="card edit-a--file">
         <div class="card-body">
             <h2 class="h6 mb-3">File</h2>
+
+            @if (MediaKinds.Of(Model) == MediaKind.Video)
+            {
+                @* Live conversion progress, driven by conversion-progress.js off the status poll. Hidden
+                   until the poll reports an active conversion, so a settled item shows nothing. *@
+                var convStatus = Model.Status == MediaStatus.Ready ? "ready"
+                    : Model.Status == MediaStatus.Failed ? "failed" : "processing";
+                <div class="conv-progress mb-3" data-slug="@Model.Slug" data-status="@convStatus" hidden>
+                    <div class="d-flex justify-content-between small text-secondary mb-1">
+                        <span class="conv-progress-label">Processing…</span>
+                        <span class="conv-progress-pct"></span>
+                    </div>
+                    <div class="progress" style="height:.4rem">
+                        <div class="conv-progress-bar progress-bar" role="progressbar" style="width:0"></div>
+                    </div>
+                </div>
+                <div class="conv-done small text-secondary mb-3" hidden>
+                    Conversion finished. <button type="button" class="conv-refresh btn btn-link btn-sm p-0 align-baseline">Refresh</button> to see the result.
+                </div>
+            }
+
             <dl class="facts mb-3">
                 <dt>Original</dt>
                 <dd class="text-break">@Model.OriginalFileName</dd>
@@ -345,4 +366,9 @@
 @if (isShare)
 {
     <script src="/js/upload.js" asp-append-version="true"></script>
+}
+
+@if (MediaKinds.Of(Model) == MediaKind.Video)
+{
+    <script src="/js/conversion-progress.js" asp-append-version="true"></script>
 }

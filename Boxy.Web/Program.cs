@@ -117,6 +117,8 @@ await builder.RunWithLoggingAsync(async b =>
     b.Services.AddSingleton<MediaProcessor>();
     b.Services.AddSingleton<FileMetadataExtractor>();
     b.Services.AddSingleton<MediaProcessingQueue>();
+    // Live conversion progress the status poll reads: in-memory, written by the worker as it encodes.
+    b.Services.AddSingleton<ConversionProgress>();
     // Webhook client: short timeout and never auto-follow redirects, so a redirect can't send the POST
     // to an address the SSRF check already validated away from.
     b.Services.AddHttpClient("webhook", c => c.Timeout = TimeSpan.FromSeconds(10))
