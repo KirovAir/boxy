@@ -159,6 +159,15 @@ public class UploadController(
         {
             return StatusCode(StatusCodes.Status413PayloadTooLarge, new { error = "That chunk is too large." });
         }
+        catch (Exception ex) when (ex is Microsoft.AspNetCore.Http.BadHttpRequestException or OperationCanceledException or IOException)
+        {
+            // The client hung up mid-chunk: a dropped mobile connection, or the uploader's own stall-watchdog
+            // aborting a stuck chunk so it can retry. Not a server error - the client re-sends and the staged
+            // part is overwritten - so answer with a retryable status rather than letting an unhandled 500
+            // and a full stack trace land in the log for every flaky-link blip.
+            logger.LogDebug(ex, "Chunk {Index} for upload {UploadId} was interrupted by the client", index, uploadId);
+            return StatusCode(StatusCodes.Status408RequestTimeout);
+        }
         catch (ArgumentException)
         {
             return BadRequest();

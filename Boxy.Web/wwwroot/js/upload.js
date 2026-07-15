@@ -1007,8 +1007,11 @@
                     if (r.ok) {
                         var li = f.closest('li');
                         if (li) li.remove();
+                    } else {
+                        showNotice('Couldn’t delete that upload. Please try again.');
                     }
                 }).catch(function () {
+                    showNotice('Couldn’t delete that upload - check your connection and try again.');
                 });
             });
         });
