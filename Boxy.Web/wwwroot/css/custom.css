@@ -141,6 +141,19 @@ a {
     max-width: 12rem;
 }
 
+/* On a narrow phone the brand, an admin's Settings link, the username and Log out crowd one navbar row.
+   Drop the Settings label to its icon (the link keeps its aria-label) and let the username take less room,
+   so nothing spills off the edge. */
+@media (max-width: 460px) {
+    .navbar__link span {
+        display: none;
+    }
+
+    .navbar__user {
+        max-width: 6rem;
+    }
+}
+
 .brand__mark {
     color: var(--brand);
     flex: none;
@@ -474,6 +487,35 @@ a {
     color: var(--ink);
 }
 
+/* Upload queue rows (markup built in upload.js). On a narrow screen a long filename or a failure reason
+   must stay inside the row: a flex child won't shrink without min-width:0, so the name stops truncating and
+   the size/rate line gets pushed off the edge of the card. */
+.job-name {
+    min-width: 0;
+}
+
+.job-meta {
+    flex-wrap: wrap;
+    column-gap: .75rem;
+}
+
+.job-meta .j-rate {
+    min-width: 0;
+    word-break: break-word;
+}
+
+/* A long token in the aggregate readout shouldn't push it past the card edge. */
+#readout {
+    overflow-wrap: anywhere;
+}
+
+/* File rows (uploaded items and drop-offs): let the title/meta column shrink so a long filename truncates
+   instead of shoving the Delete/Open button off the row on a narrow screen - the same flex min-width:0 the
+   queue rows need. */
+.drop-row .flex-grow-1 {
+    min-width: 0;
+}
+
 /* ── Thumbnails ──────────────────────────────────────────────────────────── */
 .thumb-16x9 {
     aspect-ratio: 16 / 9;
@@ -590,6 +632,19 @@ a {
     background: var(--kraft-card);
     color: var(--ink);
     box-shadow: 0 1px 2px #2a201820;
+}
+
+/* On a phone the pill bar can hold six tabs (settings) - let them wrap inside the container so every tab
+   stays reachable and the active one is always visible, instead of the row overflowing off-screen. */
+@media (max-width: 575.98px) {
+    .admin-tabs {
+        display: flex;
+        flex-wrap: wrap;
+    }
+
+    .admin-tab {
+        padding: .45rem .9rem;
+    }
 }
 
 /* ── Films (video shares) ────────────────────────────────────────────────── */

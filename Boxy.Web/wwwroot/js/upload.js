@@ -860,7 +860,7 @@
             '<span class="small text-secondary job-state"></span>' +
             '<button type="button" class="btn-close job-cancel" aria-label="Cancel"></button></span></div>' +
             '<div class="progress my-1" style="height:6px;"><div class="progress-bar job-fill" style="width:0%"></div></div>' +
-            '<div class="d-flex justify-content-between small text-secondary">' +
+            '<div class="d-flex justify-content-between small text-secondary job-meta">' +
             '<span class="j-size"></span><span class="j-rate"></span></div>';
         li.querySelector('.job-name').textContent = job.file.name;
         li.querySelector('.j-size').textContent = fmtSize(job.file.size);

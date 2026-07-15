@@ -91,6 +91,9 @@
                 <span class="mono">/u/*</span>).</li>
             <li><strong>Timeouts</strong> are usually inactivity windows, not total-transfer caps, so they don't
                 cut off a steadily-flowing upload; raise them only for very slow links.</li>
+            <li><strong>HTTP/3 (QUIC):</strong> on by default in NPMplus, and it runs over UDP - which mobile and
+                cellular networks often throttle or mishandle. If uploads are smooth on Wi-Fi and desktop but
+                flaky on phones, disable HTTP/3 for this host (or globally) so it falls back to TCP.</li>
         </ul>
         <p class="small text-secondary mb-1">Example per-host nginx / NPMplus "Advanced" config:</p>
         <pre class="mono small bg-body-secondary rounded p-3 mb-0" style="overflow:auto;">client_max_body_size 0;          # 0 = unlimited (NPMplus default). Or a value above your largest upload.
