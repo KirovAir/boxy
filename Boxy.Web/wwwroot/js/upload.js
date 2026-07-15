@@ -14,7 +14,9 @@
         && window.Blob && Blob.prototype.slice)) return;
 
     var CHUNK = 16 * 1024 * 1024; // 16 MB - small, resumable requests that pass any sane reverse-proxy body limit
-    var CONCURRENCY = 6;          // chunks in flight per file - more parallelism to fill a high-latency pipe
+    var CONCURRENCY = 3;          // chunks in flight per file - enough to fill a pipe, few enough not to
+    // collapse a thin mobile uplink. Six congested a cellular link into dropped chunks and starved the
+    // poster/row requests sharing the connection, so a phone upload "worked" but its thumbnail never loaded.
     // A chunk gets 8 retries backing off to 30s, so a drop-out has a couple of minutes to come back before
     // the file is called failed. The old budget was 4 tries over 7.5s, which a tunnel or a lift outlasts.
     var RETRIES = 8;
@@ -1071,12 +1073,16 @@
                 })
                 .then(function (s) {
                     if (!s || !(s.ready || s.failed)) return;
-                    // Terminal: stop this row polling, then swap in the fresh server-rendered row - now
-                    // with its poster/icon and full metadata - so no markup is patched here.
-                    row.setAttribute('data-status', s.ready ? 'ready' : 'failed');
                     if (rowBase && row.classList.contains('mine-item')) {
+                        // Swap in the final server-rendered row (with its poster). Do NOT pre-mark this row
+                        // ready: if the re-fetch drops on a flaky link, leaving it "processing" lets the next
+                        // tick retry, instead of stranding a thumbnail-less row until a reload. On success the
+                        // fresh row carries "ready" itself, so polling stops on its own.
                         insertOrReplaceRow(slug, false);
                     } else {
+                        // No per-row endpoint here (the dashboard's cards); mark it terminal and let the
+                        // deferred full-page reload swap in the finished thumbnail.
+                        row.setAttribute('data-status', s.ready ? 'ready' : 'failed');
                         reloadWhenDone = true;
                     }
                 }).catch(function () {
