@@ -680,12 +680,23 @@ public class MediaProcessingWorker(
             return null;
         }
 
-        return await storage.GetServeAsync(fileName, ct) switch
+        // Truly non-fatal, as the summary promises: this runs before the Ready save, and on a remote
+        // backend GetServeAsync does a network HEAD that can fail transiently. A size we can't read must
+        // never strand an already-stored rendition in Processing - swallow everything but a real shutdown.
+        try
         {
-            LocalBlobServe local => File.Exists(local.Path) ? new FileInfo(local.Path).Length : null,
-            RemoteBlobServe remote => remote.Length,
-            _ => null
-        };
+            return await storage.GetServeAsync(fileName, ct) switch
+            {
+                LocalBlobServe local => File.Exists(local.Path) ? new FileInfo(local.Path).Length : null,
+                RemoteBlobServe remote => remote.Length,
+                _ => null
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not read the size of {File}; recording it as unknown", fileName);
+            return null;
+        }
     }
 
     /// <summary>The stored name for a lane, for <see cref="MediaItem.WebEncoder"/>. Null for served-as-is,
