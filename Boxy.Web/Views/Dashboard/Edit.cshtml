@@ -201,7 +201,10 @@
         <div class="card-body">
             <h2 class="h6 mb-3">File</h2>
 
-            @if (MediaKinds.Of(Model) == MediaKind.Video)
+            @* Gate on Kind (known from the extension at upload), NOT MediaKinds.Of, which needs a probe
+               result: VideoCodec isn't persisted until the conversion finishes, so Of() would report this
+               as a plain File for the whole encode - exactly when the bar needs to be on the page. *@
+            @if (Model.Kind == MediaKind.Video)
             {
                 @* Live conversion progress, driven by conversion-progress.js off the status poll. Hidden
                    until the poll reports an active conversion, so a settled item shows nothing. *@
@@ -370,7 +373,7 @@
     <script src="/js/upload.js" asp-append-version="true"></script>
 }
 
-@if (MediaKinds.Of(Model) == MediaKind.Video)
+@if (Model.Kind == MediaKind.Video)
 {
     <script src="/js/conversion-progress.js" asp-append-version="true"></script>
 }

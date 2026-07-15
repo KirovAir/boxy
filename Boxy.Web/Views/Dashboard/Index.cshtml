@@ -221,6 +221,17 @@ else
                                     <span class="stamp stamp--count" title="Original date from the file's own metadata">@cap.ToString("d MMM yyyy")</span>
                                 }
                             </div>
+                            @* Live conversion bar: starts indeterminate, then upload.js's poll fills in the
+                               real percent. Rendered only while converting; the card reloads to its poster
+                               when it finishes. *@
+                            @if (m.Kind == MediaKind.Video && m.Status != MediaStatus.Ready && m.Status != MediaStatus.Failed)
+                            {
+                                <div class="js-conv-progress mb-2">
+                                    <div class="progress" style="height:.3rem">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated" style="width:100%"></div>
+                                    </div>
+                                </div>
+                            }
                             <div class="small mb-2">Uploaded
                                 <partial name="_TimeAgo" model="m.CreatedDate"/>
                             </div>

@@ -1046,6 +1046,21 @@
         pollOnce();
     }
 
+    // Fill a row's conversion bar from the status poll's progress block. A no-op on rows without one, so it
+    // is safe to call for every polled row (drop-off rows, share cards). Determinate when a percent is
+    // known; otherwise indeterminate (queued/preparing/finishing, or an unknown source duration).
+    function updateConvBar(row, progress) {
+        var bar = row.querySelector('.js-conv-progress .progress-bar');
+        if (!bar) return;
+        if (progress && typeof progress.percent === 'number') {
+            bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+            bar.style.width = progress.percent + '%';
+        } else {
+            bar.classList.add('progress-bar-striped', 'progress-bar-animated');
+            bar.style.width = '100%';
+        }
+    }
+
     function pollOnce() {
         var rows = document.querySelectorAll('[data-status="processing"][data-slug]');
         if (!rows.length) {
@@ -1072,7 +1087,9 @@
                     return r.ok ? r.json() : null;
                 })
                 .then(function (s) {
-                    if (!s || !(s.ready || s.failed)) return;
+                    if (!s) return;
+                    updateConvBar(row, s.progress);
+                    if (!(s.ready || s.failed)) return;
                     if (rowBase && row.classList.contains('mine-item')) {
                         // Swap in the final server-rendered row (with its poster). Do NOT pre-mark this row
                         // ready: if the re-fetch drops on a flaky link, leaving it "processing" lets the next
