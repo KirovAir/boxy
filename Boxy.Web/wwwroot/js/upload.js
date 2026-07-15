@@ -5,15 +5,23 @@
  * with transfer rate and ETA. Falls back to a plain multipart form post when JS is off. */
 (function () {
     var form = document.getElementById('uploadForm');
-    if (!form || !window.XMLHttpRequest) return;
+    if (!form) return;
+    // The chunked engine needs these APIs. If any is missing, do NOT touch the page - returning here leaves
+    // the native <form> POST (and its visible submit button) working as the fallback, instead of hiding the
+    // button and then throwing on a browser that can't run the engine. crypto is deliberately NOT required:
+    // randomId() falls back to Math.random, so a missing crypto never blocks an upload.
+    if (!(window.XMLHttpRequest && window.Promise && Array.prototype.find
+        && window.Blob && Blob.prototype.slice)) return;
 
-    var CHUNK = 16 * 1024 * 1024; // 16 MB - few requests, safe under the 100 MB proxy/tunnel limit
+    var CHUNK = 16 * 1024 * 1024; // 16 MB - small, resumable requests that pass any sane reverse-proxy body limit
     var CONCURRENCY = 6;          // chunks in flight per file - more parallelism to fill a high-latency pipe
     // A chunk gets 8 retries backing off to 30s, so a drop-out has a couple of minutes to come back before
     // the file is called failed. The old budget was 4 tries over 7.5s, which a tunnel or a lift outlasts.
     var RETRIES = 8;
     var MAX_BACKOFF = 30000;
     var OFFLINE_WAIT = 15000;     // longest we sit waiting for an 'online' event before trying anyway
+    var STALL_MS = 30000;         // abort+retry a chunk whose upload stops making progress this long (half-open link)
+    var REQUEST_TIMEOUT = 60000;  // hard timeout on the small JSON requests (resume probe, complete, poll, status)
     var POLL_MS = 2000;           // how often we ask whether a detached assembly has finished
 
     var chunkUrl = form.dataset.chunkUrl;
@@ -149,6 +157,12 @@
     // share or the new-upload dashboard, which all post chunks to the same endpoint.
     var LS_KEY = 'boxy_uploads', MAX_AGE = 12 * 3600 * 1000;
 
+    // Key resume memory on name+size+lastModified. lastModified is what makes this key SAFE: without it, two
+    // different files that happen to share a name and an exact byte size would resume onto each other's
+    // staged parts (the server only checks each part's LENGTH, and no content hash is compared), silently
+    // assembling a corrupt file. The cost is that if iOS re-exports a picked clip with a fresh lastModified,
+    // the same file re-picked won't match and re-sends from scratch - safe, just not resumed. (Sending a
+    // content fingerprint to /complete would let us drop lastModified safely; until then, correctness wins.)
     function fileSig(f) {
         return completeUrl + '::' + f.name + '|' + f.size + '|' + (f.lastModified || 0);
     }
@@ -225,8 +239,8 @@
         });
 
         function probe(tries) {
-            return fetch(chunksUrl + '?uploadId=' + encodeURIComponent(job.uploadId) + layoutQuery(job),
-                {headers: {'Accept': 'application/json'}})
+            return request('GET', chunksUrl + '?uploadId=' + encodeURIComponent(job.uploadId) + layoutQuery(job),
+                {accept: 'application/json'})
                 .then(function (r) {
                     if (r.ok) return r.json();
                     throw {permanent: isPermanent(r.status)};
@@ -246,6 +260,46 @@
     function delay(ms) {
         return new Promise(function (resolve) {
             setTimeout(resolve, ms);
+        });
+    }
+
+    // Minimal XHR-based request, so the whole uploader depends only on XMLHttpRequest and never on
+    // window.fetch. Some in-app webviews (WhatsApp/Instagram) and old iOS Safari have XHR but not fetch;
+    // when the finalize/resume/status calls used fetch, such a browser could upload every chunk and then be
+    // unable to assemble the file. Returns a fetch-like response ({status, ok, json(), text()}); json()
+    // throws on a non-JSON body, matching fetch's reject, which the callers already handle.
+    function request(method, url, opts) {
+        opts = opts || {};
+        return new Promise(function (resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            try {
+                xhr.open(method, url);
+            } catch (e) {
+                reject(e);
+                return;
+            }
+            if (opts.accept) xhr.setRequestHeader('Accept', opts.accept);
+            xhr.timeout = REQUEST_TIMEOUT;   // ontimeout below is dead code without this; a stalled probe/poll must not hang
+            xhr.onload = function () {
+                var body = xhr.responseText;
+                resolve({
+                    status: xhr.status,
+                    ok: xhr.status >= 200 && xhr.status < 300,
+                    text: function () {
+                        return body;
+                    },
+                    json: function () {
+                        return JSON.parse(body);
+                    }
+                });
+            };
+            xhr.onerror = function () {
+                reject(new Error('network error'));
+            };
+            xhr.ontimeout = function () {
+                reject(new Error('timeout'));
+            };
+            xhr.send(opts.body != null ? opts.body : null);
         });
     }
 
@@ -282,10 +336,16 @@
     var maxBytes = parseInt(form.dataset.maxBytes || '0', 10);
 
     function addFiles(fileList) {
-        var added = 0, tooBig = [];
+        var added = 0, tooBig = [], unreadable = [];
         for (var i = 0; i < fileList.length; i++) {
             var f = fileList[i];
-            if (!f.size) continue;
+            // A file the picker reports as 0 bytes can't be uploaded. On iPhones this is usually an iCloud
+            // photo/video not yet downloaded to the device. Don't drop it silently (that reads to the user
+            // as "nothing happened") - collect it and say how to fix it, below.
+            if (!f.size) {
+                unreadable.push(f.name);
+                continue;
+            }
             // Reject over-limit files up front, so a huge file never starts uploading.
             if (maxBytes > 0 && f.size > maxBytes) {
                 tooBig.push(f.name);
@@ -304,11 +364,20 @@
             renderJob(job);
             added++;
         }
-        if (tooBig.length && readoutEl) {
+        var notes = [];
+        if (tooBig.length) {
             var mb = Math.round(maxBytes / 1048576);
-            readoutEl.className = 'alert alert-warning py-2 small';
-            readoutEl.textContent = (tooBig.length === 1 ? '“' + tooBig[0] + '” is' : tooBig.length + ' files are')
-                + ' over the ' + mb + ' MB limit and ' + (tooBig.length === 1 ? 'was' : 'were') + ' skipped.';
+            notes.push((tooBig.length === 1 ? '“' + tooBig[0] + '” is' : tooBig.length + ' files are')
+                + ' over the ' + mb + ' MB limit for this box and ' + (tooBig.length === 1 ? 'was' : 'were') + ' skipped.');
+        }
+        if (unreadable.length) {
+            notes.push((unreadable.length === 1 ? '“' + unreadable[0] + '” couldn’t be read' : unreadable.length + ' files couldn’t be read')
+                + ' (0 bytes). If it’s an iPhone photo or video stored in iCloud, open it once in Photos so it downloads to this device, then pick it again.');
+        }
+        if (notes.length) {
+            showNotice(notes.join(' '));
+        } else if (added) {
+            hideNotice();   // a clean batch clears any stale skip notice
         }
         if (added) {
             dismissResumeHint();
@@ -321,6 +390,31 @@
         }
         // Only pump when something was queued - otherwise finishSweep would clear the over-limit warning.
         if (added && !running) pump();
+    }
+
+    // Skipped-file notices (over-limit, 0-byte) live in their own element, NOT the progress readout - an
+    // in-flight upload's live progress would otherwise overwrite the notice within a tick and the user would
+    // never learn why a file was skipped.
+    var noticeEl = null;
+
+    function showNotice(text) {
+        if (!queueEl) return;
+        if (!noticeEl) {
+            noticeEl = document.createElement('div');
+            queueEl.parentNode.insertBefore(noticeEl, queueEl);
+        }
+        noticeEl.className = 'alert alert-warning py-2 small';
+        noticeEl.textContent = text;
+    }
+
+    function hideNotice() {
+        if (noticeEl) {
+            try {
+                noticeEl.remove();
+            } catch (e) {
+            }
+            noticeEl = null;
+        }
     }
 
     function pump() {
@@ -434,6 +528,16 @@
         return Math.round(base * (0.75 + Math.random() * 0.5));
     }
 
+    // Parse a Retry-After header (delta-seconds or an HTTP-date) into ms, or 0 when absent/unparseable.
+    function retryAfterMs(xhr) {
+        var h = xhr.getResponseHeader && xhr.getResponseHeader('Retry-After');
+        if (!h) return 0;
+        h = ('' + h).trim();
+        if (/^\d+$/.test(h)) return parseInt(h, 10) * 1000;
+        var when = Date.parse(h);
+        return isNaN(when) ? 0 : Math.max(0, when - Date.now());
+    }
+
     // Resolves once the browser believes it's online again, or after a cap - never trust the event alone.
     function whenOnline() {
         if (navigator.onLine !== false) return Promise.resolve();
@@ -462,16 +566,41 @@
                     return;
                 }
                 var xhr = new XMLHttpRequest();
+                var stalled = false, watchdog = null;
+
+                // A half-open link (cell/wifi handoff, a captive portal, a middlebox) can stop delivering
+                // bytes without ever firing onerror, which would hang this chunk forever and pin its
+                // concurrency slot so the upload never finalizes. Guard every chunk with a watchdog that
+                // aborts it once its upload makes no progress for STALL_MS, then routes through fail() so it
+                // retries like any transient error. The timer is re-armed on each progress event, so a
+                // slow-but-advancing chunk is never killed.
+                function arm() {
+                    clearTimeout(watchdog);
+                    watchdog = setTimeout(function () {
+                        stalled = true;
+                        try {
+                            xhr.abort();
+                        } catch (e) {
+                        }
+                    }, STALL_MS);
+                }
+
+                function disarm() {
+                    clearTimeout(watchdog);
+                }
+
                 xhr.open('POST', chunkUrl + '?uploadId=' + job.uploadId + '&index=' + idx);
                 xhr.setRequestHeader('Content-Type', 'application/octet-stream');
                 job.xhrs.push(xhr);
                 xhr.upload.onprogress = function (e) {
+                    arm();
                     if (e.lengthComputable) {
                         job.loaded[idx] = e.loaded;
                         onProgress(job);
                     }
                 };
                 xhr.onload = function () {
+                    disarm();
                     detach(job, xhr);
                     if (job.cancelled) {
                         resolve();
@@ -490,19 +619,26 @@
                         reject(new Error('chunk ' + idx + ' rejected'));
                         return;
                     }
-                    fail();
+                    // Transient (5xx / 408 / 429). Honour Retry-After when the server - or a proxy/WAF like
+                    // CrowdSec throttling the chunk burst - sends one, so we don't retry ahead of its window.
+                    fail(retryAfterMs(xhr));
                 };
                 xhr.onerror = function () {
+                    disarm();
                     detach(job, xhr);
-                    fail();
+                    fail(0);
                 };
                 xhr.onabort = function () {
+                    disarm();
                     detach(job, xhr);
-                    resolve();
+                    // A watchdog abort is a stall - retry it. A user cancel (job.cancelled) just stops.
+                    if (stalled && !job.cancelled) fail(0);
+                    else resolve();
                 };
+                arm();
                 xhr.send(blob);
 
-                function fail() {
+                function fail(minDelay) {
                     if (job.cancelled) {
                         resolve();
                         return;
@@ -511,12 +647,13 @@
                         reject(new Error('chunk ' + idx + ' failed'));
                         return;
                     }
-                    // Sit out the backoff, then wait for the network before spending the next attempt.
+                    // Sit out the backoff (or the server's Retry-After, whichever is longer), then wait for
+                    // the network before spending the next attempt.
                     setTimeout(function () {
                         whenOnline().then(function () {
                             attempt(tries + 1).then(resolve, reject);
                         });
-                    }, backoffMs(tries));
+                    }, Math.max(backoffMs(tries), minDelay || 0));
                 }
             });
         }
@@ -558,7 +695,7 @@
             if (job.cancelled) return Promise.resolve();
             return whenOnline()
                 .then(function () {
-                    return fetch(askUrl, {method: 'POST', headers: {'Accept': 'application/json'}});
+                    return request('POST', askUrl, {accept: 'application/json'});
                 })
                 .then(read)
                 .then(function (body) {
@@ -576,7 +713,7 @@
             return delay(POLL_MS)
                 .then(whenOnline)
                 .then(function () {
-                    return fetch(pollUrl, {headers: {'Accept': 'application/json'}});
+                    return request('GET', pollUrl, {accept: 'application/json'});
                 })
                 .then(read)
                 .then(function (body) {
@@ -669,7 +806,8 @@
         forgetUpload(job);
         if (job.uploadId) {
             try {
-                fetch(abortUrl + '?uploadId=' + job.uploadId, {method: 'POST'});
+                request('POST', abortUrl + '?uploadId=' + job.uploadId).catch(function () {
+                });
             } catch (e) {
             }
         }
@@ -843,7 +981,7 @@
     // Fetch the server-rendered "your uploads" row for a slug and prepend it, or replace it if present.
     function insertOrReplaceRow(slug, prepend) {
         if (!mineEl || !rowBase) return;
-        fetch(rowBase + '/' + slug + '/row', {headers: {'Accept': 'text/html'}})
+        request('GET', rowBase + '/' + slug + '/row', {accept: 'text/html'})
             .then(function (r) { return r.ok ? r.text() : null; })
             .then(function (html) {
                 if (!html) return;
@@ -865,11 +1003,12 @@
             ev.preventDefault();
             window.Boxy.confirm('Delete this upload? This can’t be undone.').then(function (ok) {
                 if (!ok) return;
-                fetch(f.action, {method: 'POST'}).then(function (r) {
+                request('POST', f.action).then(function (r) {
                     if (r.ok) {
                         var li = f.closest('li');
                         if (li) li.remove();
                     }
+                }).catch(function () {
                 });
             });
         });
@@ -923,7 +1062,7 @@
         Array.prototype.forEach.call(rows, function (row) {
             var slug = row.getAttribute('data-slug');
             if (!slug) return;
-            fetch('/api/media/' + slug + '/status', {headers: {'Accept': 'application/json'}})
+            request('GET', '/api/media/' + slug + '/status', {accept: 'application/json'})
                 .then(function (r) {
                     return r.ok ? r.json() : null;
                 })
@@ -957,12 +1096,24 @@
         if (job && job.state === 'failed' && !ev.target.closest('.job-cancel')) retry(job);
     });
 
+    // An opaque routing token, not a secret. Prefer crypto for a good spread, but fall back to Math.random
+    // when crypto is missing (very old/stripped engines, some privacy webviews) so that picking a file can
+    // never throw here and silently drop the upload. Either way it is 32 hex chars, matching the server's
+    // ^[a-zA-Z0-9]{8,64}$.
     function randomId() {
-        var b = new Uint8Array(16);
-        crypto.getRandomValues(b);
-        return Array.prototype.map.call(b, function (x) {
-            return ('0' + x.toString(16)).slice(-2);
-        }).join('');
+        try {
+            if (window.crypto && crypto.getRandomValues && window.Uint8Array) {
+                var b = new Uint8Array(16);
+                crypto.getRandomValues(b);
+                return Array.prototype.map.call(b, function (x) {
+                    return ('0' + x.toString(16)).slice(-2);
+                }).join('');
+            }
+        } catch (e) {
+        }
+        var s = '';
+        for (var i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
+        return s;
     }
 
     function fmtSize(n) {

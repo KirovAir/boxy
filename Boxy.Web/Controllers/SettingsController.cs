@@ -16,6 +16,7 @@ public class SettingsController(
     UserService users,
     IDbContextFactory<AppDbContext> dbFactory,
     IBlobStore blobs,
+    StorageSettings storageSettings,
     IConfiguration config,
     EmailSettingsProvider emailProvider,
     VideoSettingsProvider videoProvider,
@@ -47,6 +48,60 @@ public class SettingsController(
         }, ct);
         this.FlashSuccess("Platform settings saved.");
         return RedirectToAction(nameof(Index));
+    }
+
+    [HttpGet("server")]
+    public async Task<IActionResult> Server(CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var settings = await db.GetSettingsAsync<PlatformSettings>(ct);
+
+        long? freeBytes = null;
+        try
+        {
+            // Free space on the volume the scratch/working files actually sit on - the same DeepestMountFor
+            // logic the uploader uses, so /data on a mounted volume is measured, not the container root.
+            var drives = DriveInfo.GetDrives();
+            var mount = ChunkedUploadService.DeepestMountFor(drives.Select(d => d.RootDirectory.FullName), blobs.ScratchDir);
+            var drive = mount is null ? null : drives.FirstOrDefault(d => d.RootDirectory.FullName == mount);
+            freeBytes = drive?.AvailableFreeSpace;
+        }
+        catch
+        {
+            // An odd mount or a platform that won't say just leaves free space "unknown" on the page.
+        }
+
+        return View(new ServerSetupViewModel
+        {
+            StorageProvider = storageSettings.Provider,
+            ScratchDir = blobs.ScratchDir,
+            FreeBytes = freeBytes,
+            MinFreeDiskBytes = storageSettings.MinFreeDiskBytes,
+            MaxUploadMb = settings.MaxUploadMb,
+            GpuAvailable = capabilities.CanEncodeOnGpu,
+            GpuUnavailableReason = capabilities.GpuUnavailableReason,
+            CanToneMap = capabilities.CanToneMap
+        });
+    }
+
+    // Diagnostic for the Server-setup page: read a raw request body and report how many bytes actually
+    // arrived. The page POSTs increasing sizes to it to prove the reverse proxy forwards large uploads - a
+    // too-low nginx client_max_body_size, or a WAF buffering/blocking big bodies, shows up here as a failed
+    // or short POST. Admin-only (controller authorize); changes nothing, so no antiforgery token is needed.
+    [HttpPost("server/selftest")]
+    [IgnoreAntiforgeryToken]
+    [DisableRequestSizeLimit]
+    public async Task<IActionResult> SelfTest(CancellationToken ct)
+    {
+        long received = 0;
+        var buffer = new byte[128 * 1024];
+        int read;
+        while ((read = await Request.Body.ReadAsync(buffer, ct)) > 0)
+        {
+            received += read;
+        }
+
+        return Json(new { received });
     }
 
     [HttpGet("email")]

@@ -1,0 +1,120 @@
+@model ServerSetupViewModel
+@{
+    ViewData["Title"] = "Server setup";
+    ViewData["SettingsTab"] = "server";
+    var header = new PageHeader { Title = "Settings", Icon = PageIcon.Settings };
+
+    var maxUpload = Model.MaxUploadMb <= 0 ? "Unlimited" : $"{Model.MaxUploadMb:n0} MB";
+    var free = Model.FreeBytes is { } fb ? Format.Bytes(fb) : "unknown";
+    var reserve = Model.MinFreeDiskBytes <= 0 ? "none" : Format.Bytes(Model.MinFreeDiskBytes);
+
+    // Assembling an upload writes a second full copy next to the staged parts, so a big upload needs ~2x its
+    // size free transiently. Warn when the working volume can't comfortably take the 10 GB target.
+    var needForTarget = ServerSetupViewModel.TargetLargeUploadBytes * 2 + Model.MinFreeDiskBytes;
+    var tightDisk = Model.FreeBytes is { } f2 && f2 < needForTarget;
+    var lowCap = Model.MaxUploadMb > 0 && (long)Model.MaxUploadMb * 1024 * 1024 < ServerSetupViewModel.TargetLargeUploadBytes;
+
+    var envCards = new (string Label, string Value, string? Sub)[]
+    {
+        ("Max upload (regular users)", maxUpload, "Admins are never capped"),
+        ("Working volume free", free, Model.ScratchDir),
+        ("Reserve kept free", reserve, "Uploads stop before eating into it"),
+        ("Storage backend", Model.StorageProvider, null)
+    };
+}
+<partial name="_PageHeader" model="header"/>
+<partial name="_SettingsNav"/>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2">
+    <h2 class="h5 mb-0">Environment</h2>
+</div>
+<p class="text-secondary small">What this instance can take right now. Large RAW/lossless uploads lean on the
+    chunked uploader, the per-user cap, and free space on the working volume.</p>
+
+<div class="row g-3 mb-3">
+    @foreach (var c in envCards)
+    {
+        <div class="col-6 col-md-3">
+            <div class="card h-100">
+                <div class="card-body py-3">
+                    <div class="text-secondary small text-uppercase" style="letter-spacing: .04em;">@c.Label</div>
+                    <div class="h5 mb-0 mt-1 text-break">@c.Value</div>
+                    @if (c.Sub is not null)
+                    {
+                        <div class="text-secondary small mt-1 text-break">@c.Sub</div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (lowCap)
+{
+    <div class="alert alert-warning py-2 small">
+        The per-user upload cap is <strong>@maxUpload</strong>, which is below a typical 10&nbsp;GB RAW/lossless
+        file. Regular users (and anyone dropping into their box) will have larger files rejected before upload.
+        Set it to <span class="mono">0</span> (unlimited) or at least <span class="mono">10240</span> MB on the
+        <a href="/settings">Platform</a> tab. Your own admin uploads are never capped.
+    </div>
+}
+@if (tightDisk)
+{
+    <div class="alert alert-warning py-2 small">
+        Only <strong>@free</strong> free on the working volume. Assembling an upload writes a second full copy
+        next to its staged chunks, so one 10&nbsp;GB upload needs roughly <strong>20&nbsp;GB</strong> free
+        (plus the @reserve reserve) while it finishes. Grow the volume, or expect large uploads to fail near
+        completion with an out-of-storage error.
+    </div>
+}
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2 mt-4">
+    <h2 class="h5 mb-0">Reverse proxy</h2>
+</div>
+<p class="text-secondary small">Boxy uploads in 16&nbsp;MB chunks, so any reasonable proxy handles them - but a
+    proxy that caps request bodies, or a WAF that buffers/blocks large POSTs, will still break uploads. Best
+    practice for the host that serves Boxy:</p>
+
+<div class="card mb-2">
+    <div class="card-body">
+        <ul class="small mb-3">
+            <li><strong>Body size:</strong> allow large bodies. On nginx / Nginx&nbsp;Proxy&nbsp;Manager / NPMplus
+                that is <span class="mono">client_max_body_size</span> (NPMplus already defaults to
+                <span class="mono">0</span> = unlimited; plain nginx defaults to just <span class="mono">1m</span>
+                and must be raised). <span class="mono">0</span> means unlimited.</li>
+            <li><strong>Don't buffer:</strong> stream the body to Boxy with
+                <span class="mono">proxy_request_buffering off</span>, and set
+                <span class="mono">proxy_http_version 1.1</span> or chunked bodies get buffered anyway.</li>
+            <li><strong>WAF / CrowdSec:</strong> if you run a WAF (e.g. CrowdSec AppSec), it can force-buffer the
+                whole body and 403 large uploads, and may rate-ban the many chunk requests. Disable it for this
+                host, or whitelist the upload paths (<span class="mono">/api/u/*/chunk</span>,
+                <span class="mono">/u/*</span>).</li>
+            <li><strong>Timeouts</strong> are usually inactivity windows, not total-transfer caps, so they don't
+                cut off a steadily-flowing upload; raise them only for very slow links.</li>
+        </ul>
+        <p class="small text-secondary mb-1">Example per-host nginx / NPMplus "Advanced" config:</p>
+        <pre class="mono small bg-body-secondary rounded p-3 mb-0" style="overflow:auto;">client_max_body_size 0;          # 0 = unlimited (NPMplus default). Or a value above your largest upload.
+proxy_request_buffering off;     # stream the body to Boxy instead of spooling it first
+proxy_http_version 1.1;          # required, else chunked bodies get buffered anyway
+client_body_timeout 600s;        # inactivity windows - raise only for slow/flaky mobile links
+proxy_send_timeout  600s;
+send_timeout        600s;</pre>
+    </div>
+</div>
+
+<div class="d-flex align-items-end justify-content-between flex-wrap gap-2 mb-2 mt-4">
+    <h2 class="h5 mb-0">Upload self-test</h2>
+</div>
+<p class="text-secondary small">Sends test uploads of increasing size straight through your reverse proxy to
+    confirm large bodies get through. 16&nbsp;MB is the size real uploads use, so passing it means uploads work;
+    the larger sizes are just a headroom check. Nothing is stored - the server only counts the bytes it received.
+    Run this from the same address your users do (through the proxy), not directly against the container.</p>
+
+<div class="card">
+    <div class="card-body">
+        <button type="button" id="selftestBtn" class="btn btn-outline-primary btn-sm">Run upload path test</button>
+        <div id="selftestResult" class="alert py-2 small mt-2 mb-0 d-none"></div>
+    </div>
+</div>
+
+<script src="/js/settings-selftest.js" asp-append-version="true"></script>

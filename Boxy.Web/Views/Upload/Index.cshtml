@@ -1,4 +1,5 @@
 @model UploadPageViewModel
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment Env
 @{
     Layout = null;
 }
@@ -84,8 +85,10 @@
             </div>
         }
 
-        <script src="/js/boxy.js" asp-append-version="true"></script>
-        <script src="/js/upload.js" asp-append-version="true"></script>
+        @* Inlined (not <script src>) so the chunked uploader can't be dropped by an ad/content blocker, a
+           flaky asset hop, or an in-app browser - there is no separate request to block. The files stay the
+           source of truth under wwwroot/js. *@
+        @Boxy.Web.InlineAssets.InlineScript(Env.WebRootFileProvider, "js/boxy.js", "js/upload.js")
     }
 </main>
 <partial name="_Footer"/>
