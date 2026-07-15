@@ -1,5 +1,6 @@
 using Boxy.Data.Entities;
 using Boxy.Web;
+using Boxy.Web.Models;
 using Boxy.Web.Services;
 
 namespace Boxy.Tests;
@@ -190,10 +191,50 @@ public class MediaLogicTests
         Assert.IsFalse(Needs(ConversionProfile.Best, null, null, null, null));
     }
 
-    private static bool Needs(ConversionProfile profile, string? videoCodec, string? web, string? webCodec, string? hq)
+    [TestMethod]
+    public void ImagesAreNeverHealed()
+    {
+        // ffprobe reports a still image as a single-frame "video", so an image row carries a non-null
+        // VideoCodec (mjpeg / png / hevc for .heic). It must never be queued for a video heal: an image
+        // never gains an H.264 web lane, so without the extension guard it would re-probe on every boot
+        // forever. Classified by extension, exactly like the worker's own image branch.
+        Assert.IsFalse(Needs(ConversionProfile.Best, "mjpeg", null, null, null, ".jpg"));
+        Assert.IsFalse(Needs(ConversionProfile.Best, "png", null, null, null, ".png"));
+        Assert.IsFalse(Needs(ConversionProfile.Best, "hevc", null, null, null, ".heic"));
+
+        // A real video in the same H.265 codec still heals - the guard keys on the container, not the codec.
+        Assert.IsTrue(Needs(ConversionProfile.Best, "hevc", null, null, null, ".mp4"));
+    }
+
+    [TestMethod]
+    public void FullSizeKeepsEveryKnobButTheCaps()
+    {
+        // Full size only lifts the resolution cap and the bitrate ceiling. Everything else the admin set -
+        // crf, preset, and crucially the hardware/software Encoder - must survive, or a 4K upload silently
+        // drops to a CPU encode exactly where hardware matters most.
+        var global = new VideoSettings
+        {
+            Crf = 20, Preset = "fast", MaxLongEdge = 1920, MaxrateKbps = 16000, Encoder = VideoEncoder.Hardware
+        };
+
+        var full = ConversionProfiles.Settings(ConversionProfile.FullSize, global);
+        Assert.AreEqual(VideoEncoder.Hardware, full.Encoder);
+        Assert.AreEqual(20, full.Crf);
+        Assert.AreEqual("fast", full.Preset);
+        Assert.AreEqual(0, full.MaxLongEdge); // cap lifted
+        Assert.AreEqual(0, full.MaxrateKbps); // ceiling lifted
+
+        // A capped profile passes the admin's settings straight through, Encoder included.
+        var universal = ConversionProfiles.Settings(ConversionProfile.Universal, global);
+        Assert.AreEqual(VideoEncoder.Hardware, universal.Encoder);
+        Assert.AreEqual(1920, universal.MaxLongEdge);
+    }
+
+    private static bool Needs(ConversionProfile profile, string? videoCodec, string? web, string? webCodec, string? hq,
+        string ext = ".mp4")
     {
         return ConversionProfiles.NeedsReprocessing(
-            new ConversionProfiles.RenditionState(profile, "h", videoCodec, web, webCodec, hq));
+            new ConversionProfiles.RenditionState(profile, "h", ext, videoCodec, web, webCodec, hq));
     }
 
     private static ProbeResult Probe(string codec, string pixFmt, string? profile, int? level, string? tag)

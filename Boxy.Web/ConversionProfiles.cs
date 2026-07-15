@@ -103,20 +103,22 @@ public static class ConversionProfiles
     /// </summary>
     public static VideoSettings Settings(ConversionProfile profile, VideoSettings global)
     {
-        if (profile != ConversionProfile.FullSize)
-        {
-            return global.Normalized();
-        }
+        // Start from the admin's own normalized settings, so every knob - crf, preset, and crucially the
+        // hardware/software Encoder - carries through for every profile. A profile only ever OVERRIDES;
+        // building a fresh VideoSettings here instead dropped Encoder back to its Software default, which
+        // silently forced full-size 4K encodes onto the CPU even with VAAPI on.
+        var settings = global.Normalized();
 
         // Full size means exactly that: no resolution cap, and no bitrate ceiling to smear the detail the
-        // uploader chose this for. Quality is still CRF-bounded.
-        return new VideoSettings
+        // uploader chose this for. Nothing else changes - it still encodes on the GPU if that is what the
+        // admin picked, which is the whole point for a 4K source. Quality is still CRF-bounded.
+        if (profile == ConversionProfile.FullSize)
         {
-            Crf = global.Crf,
-            Preset = global.Preset,
-            MaxLongEdge = 0,
-            MaxrateKbps = 0
-        }.Normalized();
+            settings.MaxLongEdge = 0;
+            settings.MaxrateKbps = 0;
+        }
+
+        return settings;
     }
 
     /// <summary>The suffix of the produced web file, so a lane's output can never overwrite another
@@ -150,6 +152,7 @@ public static class ConversionProfiles
     public readonly record struct RenditionState(
         ConversionProfile Profile,
         string ContentHash,
+        string Extension,
         string? VideoCodec,
         string? WebFileName,
         string? WebCodec,
@@ -173,6 +176,16 @@ public static class ConversionProfiles
     /// </summary>
     public static bool NeedsReprocessing(RenditionState state)
     {
+        // ffprobe reports a still image as a single-frame "video", so an image row carries a non-null
+        // VideoCodec and, left alone, matches forever: an image never gains an H.264 web lane, so no rule
+        // below ever settles for it. The heal is for real videos; classify by extension, the same way the
+        // worker's own image branch does. This also closes a long-standing loop that re-queued every image
+        // on every boot (the broadened scan only made it more visible).
+        if (MediaKinds.FacetOf(state.Extension) == MediaKind.Image)
+        {
+            return false;
+        }
+
         // Not a video, or never processed at all: nothing here applies (the Uploaded/Processing requeue
         // deals with the latter).
         if (state.VideoCodec is null)

@@ -798,6 +798,18 @@
         var failed = jobs.filter(function (j) {
             return j.state === 'failed';
         }).length;
+        // A conversion that finished mid-upload deferred its full-page reload to here: pollOnce won't reload
+        // while an upload is in flight, so it clears its timer and leaves reloadWhenDone set for us. Now that
+        // nothing is uploading, honour it - but never when an upload failed, since a reload would wipe the
+        // "tap to retry" affordance. The flag stays set in that case and the next clean sweep (e.g. after a
+        // successful retry) consumes it, so the stale card is refreshed as soon as the errors are cleared.
+        if (reloadWhenDone && !failed) {
+            reloadWhenDone = false;
+            setTimeout(function () {
+                location.reload();
+            }, 900);
+            return;
+        }
         if (done === 0 && failed === 0) {
             readoutEl.className = 'alert py-2 small d-none';
             return;
@@ -896,8 +908,12 @@
             clearInterval(pollTimer);
             pollTimer = null;
             // A page whose rows can't be swapped in place (the dashboard has no row endpoint) still has to
-            // show the finished thumbnail, so once nothing is converting any more, reload once.
-            if (reloadWhenDone) {
+            // show the finished thumbnail, so once nothing is converting any more, reload once - but only
+            // when nothing is uploading. finishSweep's reload carries the same activeJobs() guard; without
+            // it here, a background conversion finishing mid-upload would tear the page down under an
+            // in-flight chunked file. While an upload is active the reload is deferred to finishSweep, which
+            // fires (and reloads) the moment that upload finishes.
+            if (reloadWhenDone && !activeJobs().length) {
                 reloadWhenDone = false;
                 window.location.reload();
             }

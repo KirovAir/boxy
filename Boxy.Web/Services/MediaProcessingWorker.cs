@@ -81,8 +81,8 @@ public class MediaProcessingWorker(
                 .Select(m => new
                 {
                     m.Id,
-                    State = new ConversionProfiles.RenditionState(m.Profile, m.ContentHash, m.VideoCodec,
-                        m.WebFileName, m.WebCodec, m.HqFileName)
+                    State = new ConversionProfiles.RenditionState(m.Profile, m.ContentHash, m.Extension,
+                        m.VideoCodec, m.WebFileName, m.WebCodec, m.HqFileName)
                 })
                 .ToListAsync(ct))
             .Where(x => ConversionProfiles.NeedsReprocessing(x.State))
@@ -204,20 +204,27 @@ public class MediaProcessingWorker(
         // format.duration can be inflated by tracks we deliberately drop with -map).
         var expectedDuration = probe.VideoDuration ?? probe.Duration;
 
-        // Poster frame (best-effort; a missing poster is not fatal).
+        // Poster frame (best-effort; a missing poster is not fatal). A reprocess (Convert again, or a heal)
+        // must NOT touch a custom thumbnail the owner uploaded in Edit: it is stored under its own bytes'
+        // hash, not the video's, so regenerating the auto {hash}.jpg here and reassigning PosterFileName
+        // would both lose the curated frame and orphan its blob forever (there is no enumeration to reclaim
+        // it). Only make or adopt the auto poster when the item has no custom one.
         var posterName = item.ContentHash + ".jpg";
-        if (await storage.ExistsAsync(posterName, ct))
+        if (item.PosterFileName is null || item.PosterFileName == posterName)
         {
-            item.PosterFileName = posterName;
-        }
-        else
-        {
-            // Seek ~10% in to skip intros and fade-from-black, then let the thumbnail filter pick the
-            // best frame of the window there. Falls back to the start when the duration is unknown.
-            var at = probe.Duration is > 0 ? probe.Duration.Value * 0.1 : 0;
-            if (await ProducePosterAsync(originalPath, posterName, at, true, ct))
+            if (await storage.ExistsAsync(posterName, ct))
             {
                 item.PosterFileName = posterName;
+            }
+            else
+            {
+                // Seek ~10% in to skip intros and fade-from-black, then let the thumbnail filter pick the
+                // best frame of the window there. Falls back to the start when the duration is unknown.
+                var at = probe.Duration is > 0 ? probe.Duration.Value * 0.1 : 0;
+                if (await ProducePosterAsync(originalPath, posterName, at, true, ct))
+                {
+                    item.PosterFileName = posterName;
+                }
             }
         }
 
@@ -242,7 +249,13 @@ public class MediaProcessingWorker(
                 item.WebFileName = keptName;
             }
 
-            // Either way the codec is the source's: that is the whole point of this profile.
+            // Either way the codec is the source's: that is the whole point of this profile. When the remux
+            // fails we serve the raw original, which for "don't convert it" IS the promise - do not resurrect
+            // a prior web file to keep it "faststart". A prior -asis.mp4 is already reused by
+            // ProduceKeptOriginalAsync above, so it never reaches here; anything else on the stem is a file
+            // from a transcoding profile, and you cannot prove from metadata that an h264/same-size/same-pixfmt
+            // file is a lossless repackage rather than a re-encode. Serving it would convert an upload the
+            // owner said to leave alone. The raw original is always the safe, in-spec fallback.
             item.WebCodec = probe.VideoCodec;
             await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
             logger.LogInformation("Processed {Slug} as uploaded, codec {Codec} (remuxed={Remuxed})",
