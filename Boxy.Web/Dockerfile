@@ -23,6 +23,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     ffmpeg \
+    libheif-examples \
+    libheif-plugin-libde265 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 888 appgroup \
     && useradd -u 888 -g 888 -d /data -s /bin/false appuser \

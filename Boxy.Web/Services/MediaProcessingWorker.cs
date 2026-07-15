@@ -165,7 +165,7 @@ public class MediaProcessingWorker(
         {
             // Distinct name so a .jpg original never becomes its own ffmpeg input+output.
             var thumb = item.ContentHash + "-thumb.jpg";
-            if (await storage.ExistsAsync(thumb, ct) || await ProducePosterAsync(originalPath, thumb, 0, false, ct))
+            if (await storage.ExistsAsync(thumb, ct) || await ProduceImageThumbnailAsync(originalPath, item.Extension, thumb, ct))
             {
                 item.PosterFileName = thumb;
             }
@@ -485,6 +485,30 @@ public class MediaProcessingWorker(
         finally
         {
             TryDeleteLocal(scratch);
+        }
+    }
+
+    /// <summary>
+    /// Thumbnail for a still image. ffmpeg reads the common formats directly, but has no HEIF demuxer, so an
+    /// iPhone HEIC/HEIF is first decoded to a PNG (via libheif) that ffmpeg can then scale. Everything else
+    /// goes straight through the ffmpeg poster path. Returns true when a thumbnail was produced and stored.
+    /// </summary>
+    private async Task<bool> ProduceImageThumbnailAsync(string originalPath, string extension, string name, CancellationToken ct)
+    {
+        if (!MediaProcessor.IsHeif(extension))
+        {
+            return await ProducePosterAsync(originalPath, name, 0, false, ct);
+        }
+
+        var decoded = ScratchOut(".png");
+        try
+        {
+            return await processor.DecodeHeifAsync(originalPath, decoded, ct)
+                   && await ProducePosterAsync(decoded, name, 0, false, ct);
+        }
+        finally
+        {
+            TryDeleteLocal(decoded);
         }
     }
 

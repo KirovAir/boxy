@@ -48,6 +48,18 @@ public class MediaProcessor(
 
     private string FfmpegPath => ffmpegOptions.FfmpegPath;
     private string FfprobePath => ffmpegOptions.FfprobePath;
+    private string HeifDecodePath => ffmpegOptions.HeifDecodePath;
+
+    /// <summary>Still-image formats ffmpeg cannot demux on its own - Apple's HEIC/HEIF, shot by every
+    /// recent iPhone. ffprobe reports them as "Invalid data" and a poster grab fails, so they must be
+    /// decoded with libheif first. Kept in step with the extensions <see cref="MediaKinds"/> classifies as
+    /// images - a HEIF extension the classifier doesn't treat as an image would never reach this path.</summary>
+    private static readonly string[] HeifExtensions = [".heic", ".heif"];
+
+    public static bool IsHeif(string extension)
+    {
+        return HeifExtensions.Contains(extension.ToLowerInvariant());
+    }
 
     private TimeSpan ProbeTimeout => TimeSpan.FromSeconds(ffmpegOptions.ProbeTimeoutSeconds);
     private TimeSpan PosterTimeout => TimeSpan.FromSeconds(ffmpegOptions.PosterTimeoutSeconds);
@@ -190,6 +202,40 @@ public class MediaProcessor(
                && double.TryParse(v.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : null;
+    }
+
+    /// <summary>
+    /// Decodes a HEIC/HEIF still (via libheif's heif-convert) into an image ffmpeg CAN read, so the normal
+    /// poster path can thumbnail it. ffmpeg's stock build has no HEIF demuxer, so a bare grab from an iPhone
+    /// HEIC fails outright and the image gets no thumbnail. <paramref name="output"/> should carry the
+    /// intended still extension (e.g. .png): heif-convert picks its format from it and has no flag to force
+    /// one. Returns false - never throws - when the tool is missing (an un-rebuilt deployment) or the file
+    /// can't be decoded, so a HEIC simply ends up without a thumbnail rather than failing the whole item.
+    /// </summary>
+    public async Task<bool> DecodeHeifAsync(string input, string output, CancellationToken ct = default)
+    {
+        var tmp = ScratchPath(output); // same extension as output, so heif-convert knows the format to write
+        try
+        {
+            var (code, _, err) = await RunAsync(HeifDecodePath, $"\"{input}\" \"{tmp}\"", PosterTimeout, ct);
+            if (code != 0)
+            {
+                logger.LogWarning("HEIF decode failed for {Path}: {Err}", input, Tail(err));
+            }
+
+            return Finalize(code, tmp, output);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // genuine app shutdown - let it propagate
+        }
+        catch (Exception ex)
+        {
+            // heif-convert absent (a deployment that predates the image update) or otherwise unlaunchable. A
+            // missing thumbnail is not fatal - the image still uploads, shares and downloads - so degrade.
+            logger.LogWarning(ex, "HEIF decode could not run for {Path} (is heif-convert installed?)", input);
+            return false;
+        }
     }
 
     /// <summary>

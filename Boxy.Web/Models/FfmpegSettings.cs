@@ -16,6 +16,11 @@ public class FfmpegSettings
     public string FfmpegPath { get; set; } = "ffmpeg";
     public string FfprobePath { get; set; } = "ffprobe";
 
+    /// <summary>The libheif tool used to decode an iPhone HEIC/HEIF still into a frame ffmpeg can turn into
+    /// a thumbnail - ffmpeg's stock build has no HEIF demuxer. Like the two above it is a binary handed to
+    /// <c>Process.Start</c>, so it stays here (environment only), never editable over HTTP.</summary>
+    public string HeifDecodePath { get; set; } = "heif-convert";
+
     /// <summary>
     /// The VAAPI render node used for hardware encoding, when an admin turns it on in Settings -> Video.
     ///
