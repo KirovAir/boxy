@@ -21,16 +21,14 @@ RUN dotnet publish Boxy.Web/Boxy.Web.csproj -c Release -o /app/publish /p:UseApp
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 # Set per target platform by buildx (amd64, arm64, ...). Used below to install the x86-only GPU driver.
 ARG TARGETARCH
+# Optional space-separated list of extra apt mirror base URLs, put ahead of the image's own sources for a
+# build that wants to force its own mirror. Empty by default: apt-install.sh already lists reliable ports
+# mirrors for arm64, where the default ports.ubuntu.com flakes, so CI needs to pass nothing.
+ARG UBUNTU_MIRROR=""
 
-# Retry apt: GitHub's arm64 runner intermittently times out reaching ports.ubuntu.com (Ubuntu's ARM
-# mirror), so give it a few tries before failing rather than dying on the first blip.
-RUN n=0; until apt-get -o Acquire::Retries=5 update \
-      && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-         gosu ffmpeg libheif-examples libheif-plugin-libde265; do \
-      n=$((n+1)); [ "$n" -ge 5 ] && echo "apt failed after $n attempts" && exit 1; \
-      echo "apt failed, retry $n in 20s..."; sleep 20; \
-    done \
-    && rm -rf /var/lib/apt/lists/* \
+COPY Boxy.Web/apt-install.sh /usr/local/bin/apt-install
+RUN chmod +x /usr/local/bin/apt-install \
+    && apt-install gosu ffmpeg libheif-examples libheif-plugin-libde265 \
     && groupadd -g 888 appgroup \
     && useradd -u 888 -g 888 -d /data -s /bin/false appuser \
     && usermod -G users appuser
@@ -43,13 +41,7 @@ RUN n=0; until apt-get -o Acquire::Retries=5 update \
 # Gen8+ incl. Gemini Lake) covers H.264 encode; i965 is the legacy Gen4-8 driver. libva picks the right one
 # by PCI id; `vainfo` confirms it (VAEntrypointEncSlice = encode).
 RUN if [ "${TARGETARCH}" = "amd64" ]; then \
-      n=0; until apt-get -o Acquire::Retries=5 update \
-        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-           intel-media-va-driver i965-va-driver libva2 libva-drm2 vainfo; do \
-        n=$((n+1)); [ "$n" -ge 5 ] && echo "apt failed after $n attempts" && exit 1; \
-        echo "apt failed, retry $n in 20s..."; sleep 20; \
-      done \
-      && rm -rf /var/lib/apt/lists/*; \
+      apt-install intel-media-va-driver i965-va-driver libva2 libva-drm2 vainfo; \
     fi
 
 WORKDIR /app
