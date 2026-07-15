@@ -84,7 +84,16 @@
                 and must be raised). <span class="mono">0</span> means unlimited.</li>
             <li><strong>Don't buffer:</strong> stream the body to Boxy with
                 <span class="mono">proxy_request_buffering off</span>, and set
-                <span class="mono">proxy_http_version 1.1</span> or chunked bodies get buffered anyway.</li>
+                <span class="mono">proxy_http_version 1.1</span> or chunked bodies get buffered anyway.
+                (NPMplus exposes this as the <em>Disable Request Buffering</em> toggle - use the toggle
+                <em>or</em> the directive, not both, or nginx rejects the duplicate.)</li>
+            <li><strong>Upload speed on HTTP/2:</strong> if uploads crawl at a few&nbsp;MB/s through the proxy
+                but fly when you hit the container directly, raise
+                <span class="mono">client_body_buffer_size</span> to at least the 16&nbsp;MB chunk size. With
+                buffering off over HTTP/2 the tiny default (<span class="mono">16k</span>) becomes the upload
+                window - the browser sends a sliver, waits for the proxy to forward it, and repeats, stalling
+                even on a LAN. <span class="mono">client_body_buffer_size 16m</span> lets a whole chunk through
+                at once and usually restores full line speed (one real setup went from ~5 to ~45&nbsp;MB/s).</li>
             <li><strong>WAF / CrowdSec:</strong> if you run a WAF (e.g. CrowdSec AppSec), it can force-buffer the
                 whole body and 403 large uploads, and may rate-ban the many chunk requests. Disable it for this
                 host, or whitelist the upload paths (<span class="mono">/api/u/*/chunk</span>,
@@ -99,6 +108,7 @@
         <pre class="mono small bg-body-secondary rounded p-3 mb-0" style="overflow:auto;">client_max_body_size 0;          # 0 = unlimited (NPMplus default). Or a value above your largest upload.
 proxy_request_buffering off;     # stream the body to Boxy instead of spooling it first
 proxy_http_version 1.1;          # required, else chunked bodies get buffered anyway
+client_body_buffer_size 16m;     # match the 16 MB chunk, else HTTP/2 uploads stall at a few MB/s
 client_body_timeout 600s;        # inactivity windows - raise only for slow/flaky mobile links
 proxy_send_timeout  600s;
 send_timeout        600s;</pre>
