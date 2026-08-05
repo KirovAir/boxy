@@ -1134,6 +1134,162 @@ public class DashboardController(
         return RedirectToAction(nameof(Edit), new { id });
     }
 
+    // The owner supplies the web version themselves, encoded at home on a fast machine, instead of making
+    // this box grind through a long transcode. Accepted only when it already meets the universal contract
+    // (H.264 8-bit 4:2:0, AAC/MP3 or no audio) and matches the source's duration, then stored under the
+    // exact name the worker would have produced - which is what keeps every existing path working: the
+    // startup heal accepts it, a later "convert again" under the same profile reuses it, and a profile
+    // switch replaces and cleans it up like any other rendition.
+    [HttpPost("media/{id:int}/webversion")]
+    [ValidateAntiForgeryToken]
+    [DisableRequestSizeLimit]
+    [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
+    public async Task<IActionResult> UploadWebVersion(int id, IFormFile? file, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await OwnedMedia(db).FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (item is null)
+        {
+            this.FlashError("That item no longer exists.");
+            return RedirectToAction(nameof(Index));
+        }
+
+        if (file is null || file.Length == 0)
+        {
+            this.FlashWarning("Choose a file to upload.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        // "Don't convert it" serves the upload untouched; there is no web copy to replace, and the heal
+        // would rightly flag one (it checks that lane still carries the source's own codec).
+        if (item.Kind != MediaKind.Video || !ConversionProfiles.Transcodes(item.Profile))
+        {
+            this.FlashError("This only applies to videos on a converting profile.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        // Racing the worker would mean both sides writing the item's rendition fields; whoever saves
+        // last wins and the other's file leaks. Status alone doesn't cover it: a "convert again"
+        // backfill keeps the item Ready the whole run, so ask the queue too. Failed is fine - this is
+        // exactly the rescue for a transcode that timed out.
+        if (item.Status is MediaStatus.Uploaded or MediaStatus.Processing || queue.IsPending(item.Id))
+        {
+            this.FlashWarning("This video is still converting - wait for that to finish first.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        var maxBytes = await MaxUploadBytesAsync(ct);
+        if (maxBytes > 0 && file.Length > maxBytes)
+        {
+            this.FlashError($"That file is over the {MbLabel(maxBytes)} upload limit.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        var scratch = storage.ScratchDir;
+        var tmpIn = Path.Combine(scratch, $"tmp_{Guid.NewGuid():N}{Path.GetExtension(file.FileName)}");
+        var tmpOut = Path.Combine(scratch, $"tmp_{Guid.NewGuid():N}.mp4");
+        try
+        {
+            await using (var fs = System.IO.File.Create(tmpIn))
+            {
+                await file.CopyToAsync(fs, ct);
+            }
+
+            var probe = await processor.ProbeAsync(tmpIn, ct);
+            if (probe is null || !MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt))
+            {
+                this.FlashError("That file isn't universally playable. Encode it as H.264 (8-bit 4:2:0) with AAC or MP3 audio and try again.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            // The same lossless remux every produced web file goes through: whatever container it arrived
+            // in (.mkv, .mov, an mp4 with moov at the end), out comes a faststart mp4. The validation then
+            // holds it to the same bar as a worker-made file, including the duration check against the
+            // source - which is what stops a different video being attached to this share by mistake.
+            if (!await processor.RemuxFastStartAsync(tmpIn, tmpOut, probe.VideoCodec, ct)
+                || await processor.ValidateWebOutputAsync(tmpOut, item.DurationSeconds, MediaProcessor.UniversalCodecs, ct) is not { } made)
+            {
+                this.FlashError("That file couldn't be used - make sure it's the same video, fully encoded (its length must match the original).");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            // The validator only rejects truncation (the worker's failure mode); user input can also be the
+            // wrong file entirely, and a LONGER one sails past. Hold it to the same tolerance both ways.
+            var madeDuration = made.VideoDuration ?? made.Duration;
+            if (item.DurationSeconds is > 1 && madeDuration is { } dur
+                && dur > item.DurationSeconds.Value + Math.Max(1.0, item.DurationSeconds.Value * 0.04))
+            {
+                this.FlashError("That file couldn't be used - it's longer than the original, so it doesn't look like the same video.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            // The remux took a while for a big file; if a conversion was queued or started in the meantime,
+            // back off rather than fight the worker over the same blob and columns.
+            if (queue.IsPending(item.Id))
+            {
+                this.FlashWarning("A conversion started while this uploaded - wait for it to finish, then try again.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
+            var webSize = new FileInfo(tmpOut).Length; // before PutAsync - it moves the file away
+            await storage.PutAsync(webName, tmpOut, ct);
+
+            var (oldWeb, oldHq) = (item.WebFileName, item.HqFileName);
+            item.WebFileName = webName;
+            item.WebCodec = made.VideoCodec;
+            item.WebSizeBytes = webSize;
+            item.WebWidth = made.Width;
+            item.WebHeight = made.Height;
+            item.WebEncoder = "uploaded";
+            item.EncodeCrf = null;
+            item.EncodePreset = null;
+            item.EncodeToneMapped = false;
+            item.EncodeMs = null;
+            item.Status = MediaStatus.Ready;
+            item.ErrorMessage = null;
+
+            // A profile that offers no H.265 rendition must not keep advertising one. It can be here as a
+            // leftover of a failed switch away from Best (the fail path restores the old renditions), and
+            // this upload is exactly the rescue for that failure - leaving it would keep offering the H.265
+            // file and make the startup heal requeue the item on every boot.
+            if (!ConversionProfiles.WantsHq(item.Profile))
+            {
+                item.HqFileName = null;
+                item.HqCodecs = null;
+            }
+
+            await db.SaveChangesAsync(ct);
+
+            // Drop what this replaced when it lived under another name (a legacy suffix, or an earlier
+            // profile's lane) and nothing else references it - the worker's own cleanup rules.
+            foreach (var stale in new[] { oldWeb, oldHq })
+            {
+                if (stale is null || stale == item.WebFileName || stale == item.HqFileName
+                    || !ConversionProfiles.IsDerivedRendition(stale))
+                {
+                    continue;
+                }
+
+                if (!await db.MediaItems.AnyAsync(m => m.WebFileName == stale || m.HqFileName == stale, ct))
+                {
+                    await storage.DeleteAsync(stale, ct);
+                }
+            }
+
+            logger.LogInformation("Owner-supplied web version for {Slug}: {Codec} {Width}x{Height} {Bytes} bytes",
+                item.Slug, made.VideoCodec, made.Width, made.Height, item.WebSizeBytes);
+            this.FlashSuccess("Web version replaced. The share now plays the file you uploaded.");
+        }
+        finally
+        {
+            TryDeleteLocal(tmpIn);
+            TryDeleteLocal(tmpOut);
+        }
+
+        return RedirectToAction(nameof(Edit), new { id });
+    }
+
     [HttpPost("media/{id:int}/delete")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteMedia(int id, CancellationToken ct)

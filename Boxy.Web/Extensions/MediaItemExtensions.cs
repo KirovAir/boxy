@@ -27,10 +27,14 @@ public static class MediaItemExtensions
     /// Without it, the viewer this feature exists for keeps the broken bytes. /f/ used to promise
     /// immutable for a week, so a browser that had already downloaded the undecodable H.265 file would not
     /// even ask for a new one - it would just keep failing, for seven days, on a video we had already fixed.
+    ///
+    /// The size rides along because the name alone no longer covers every change: an owner-supplied web
+    /// version replaces the bytes UNDER the same name, and a token that didn't move would leave everyone
+    /// who had watched the share on the old rendition for as long as their cache holds it.
     /// </summary>
     public static string WebVersion(this MediaItem item)
     {
-        return BlobVersion(item.WebFileName ?? item.ContentHash + item.Extension);
+        return BlobVersion((item.WebFileName ?? item.ContentHash + item.Extension) + item.WebSizeBytes);
     }
 
     /// <summary>The same, for the H.265 rendition. Empty when the item has none.</summary>

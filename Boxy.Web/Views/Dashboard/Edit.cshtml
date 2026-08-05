@@ -282,6 +282,7 @@
                     "cpu" => "CPU (libx264)",
                     "copied" => "stream-copied, no re-encode",
                     "reused" => "reused an earlier rendition",
+                    "uploaded" => "your own upload, used as-is",
                     _ => "served exactly as uploaded"
                 };
                 // A legacy item (converted before provenance was recorded) has a web file but no encoder
@@ -335,6 +336,25 @@
                         what it has until the new version is ready.
                     </div>
                 </form>
+
+                @* For when converting here would take ages (or already failed): encode at home, hand it in. *@
+                if (ConversionProfiles.Transcodes(Model.Profile) && Model.Status != MediaStatus.Processing && Model.Status != MediaStatus.Uploaded)
+                {
+                    <details class="mb-3">
+                        <summary class="small text-secondary" style="cursor:pointer">Upload your own web version</summary>
+                        <form method="post" action="/dashboard/media/@Model.Id/webversion" enctype="multipart/form-data"
+                              class="mt-2">
+                            @Html.AntiForgeryToken()
+                            <input type="file" name="file" accept=".mp4,.m4v,.mov,.mkv,video/*"
+                                   class="form-control form-control-sm mb-2" required/>
+                            <button type="submit" class="btn btn-sm btn-outline-primary">Upload web version</button>
+                            <div class="form-text">Converted it yourself on a faster machine? Upload it here and it
+                                replaces the web copy without any server conversion. H.264 with AAC audio, and it must
+                                be the same video. The original stays untouched.
+                            </div>
+                        </form>
+                    </details>
+                }
             }
 
             <a href="/dashboard/media/@Model.Id/download" class="btn btn-sm btn-outline-primary">Download original</a>
