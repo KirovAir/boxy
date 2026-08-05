@@ -40,7 +40,7 @@ public static class MediaItemExtensions
     /// <summary>The same, for the H.265 rendition. Empty when the item has none.</summary>
     public static string HqVersion(this MediaItem item)
     {
-        return item.HqFileName is { Length: > 0 } name ? BlobVersion(name) : "";
+        return item.HqFileName is { Length: > 0 } name ? BlobVersion(name + item.HqSizeBytes) : "";
     }
 
     private static string BlobVersion(string blobName)

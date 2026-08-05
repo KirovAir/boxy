@@ -341,10 +341,11 @@
                 if (ConversionProfiles.Transcodes(Model.Profile) && Model.Status != MediaStatus.Processing && Model.Status != MediaStatus.Uploaded)
                 {
                     <details class="mb-3">
-                        <summary class="small text-secondary" style="cursor:pointer">Upload your own web version</summary>
+                        <summary class="small text-secondary" style="cursor:pointer">Upload your own conversion</summary>
                         <form method="post" action="/dashboard/media/@Model.Id/webversion" enctype="multipart/form-data"
                               class="mt-2">
                             @Html.AntiForgeryToken()
+                            <label class="form-label small mb-1">Web version (H.264)</label>
                             <input type="file" name="file" accept=".mp4,.m4v,.mov,.mkv,video/*"
                                    class="form-control form-control-sm mb-2" required/>
                             <button type="submit" class="btn btn-sm btn-outline-primary">Upload web version</button>
@@ -353,6 +354,22 @@
                                 be the same video. The original stays untouched.
                             </div>
                         </form>
+                        @if (ConversionProfiles.WantsHq(Model.Profile))
+                        {
+                            <form method="post" action="/dashboard/media/@Model.Id/hqversion" enctype="multipart/form-data"
+                                  class="mt-3">
+                                @Html.AntiForgeryToken()
+                                <label class="form-label small mb-1">Better version (H.265)</label>
+                                <input type="file" name="file" accept=".mp4,.m4v,.mov,.mkv,video/*"
+                                       class="form-control form-control-sm mb-2" required/>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Upload H.265 version</button>
+                                <div class="form-text">@(Model.HqCodecs is null
+                                                          ? "Nothing is offered ahead of the H.264 copy yet - add your own H.265 and capable devices take it first."
+                                                          : "Replaces the H.265 file capable devices take ahead of the H.264 copy.")
+                                    H.265 4:2:0 (8- or 10-bit) with AAC audio, same video.
+                                </div>
+                            </form>
+                        }
                     </details>
                 }
             }

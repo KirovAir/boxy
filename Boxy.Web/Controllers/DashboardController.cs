@@ -1195,31 +1195,13 @@ public class DashboardController(
                 await file.CopyToAsync(fs, ct);
             }
 
-            var probe = await processor.ProbeAsync(tmpIn, ct);
-            if (probe is null || !MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt))
+            var (made, error) = await StageRenditionAsync(tmpIn, tmpOut, item,
+                p => MediaProcessor.CanStreamCopyToMp4(p.VideoCodec, p.AudioCodec, p.PixFmt),
+                MediaProcessor.UniversalCodecs,
+                "That file isn't universally playable. Encode it as H.264 (8-bit 4:2:0) with AAC or MP3 audio and try again.", ct);
+            if (made is null)
             {
-                this.FlashError("That file isn't universally playable. Encode it as H.264 (8-bit 4:2:0) with AAC or MP3 audio and try again.");
-                return RedirectToAction(nameof(Edit), new { id });
-            }
-
-            // The same lossless remux every produced web file goes through: whatever container it arrived
-            // in (.mkv, .mov, an mp4 with moov at the end), out comes a faststart mp4. The validation then
-            // holds it to the same bar as a worker-made file, including the duration check against the
-            // source - which is what stops a different video being attached to this share by mistake.
-            if (!await processor.RemuxFastStartAsync(tmpIn, tmpOut, probe.VideoCodec, ct)
-                || await processor.ValidateWebOutputAsync(tmpOut, item.DurationSeconds, MediaProcessor.UniversalCodecs, ct) is not { } made)
-            {
-                this.FlashError("That file couldn't be used - make sure it's the same video, fully encoded (its length must match the original).");
-                return RedirectToAction(nameof(Edit), new { id });
-            }
-
-            // The validator only rejects truncation (the worker's failure mode); user input can also be the
-            // wrong file entirely, and a LONGER one sails past. Hold it to the same tolerance both ways.
-            var madeDuration = made.VideoDuration ?? made.Duration;
-            if (item.DurationSeconds is > 1 && madeDuration is { } dur
-                && dur > item.DurationSeconds.Value + Math.Max(1.0, item.DurationSeconds.Value * 0.04))
-            {
-                this.FlashError("That file couldn't be used - it's longer than the original, so it doesn't look like the same video.");
+                this.FlashError(error!);
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
@@ -1288,6 +1270,150 @@ public class DashboardController(
         }
 
         return RedirectToAction(nameof(Edit), new { id });
+    }
+
+    // Same idea, for the better rendition: a source with no H.265 of its own (AV1, VP9, plain H.264) gets
+    // nothing offered ahead of the H.264 copy, but the owner can encode one at home and hand it in here.
+    // Stored under the worker's own name ({hash}-hevc.mp4), and ProduceHqAsync's reuse branch runs before
+    // its source gate precisely so a reprocess adopts this file instead of throwing it away.
+    [HttpPost("media/{id:int}/hqversion")]
+    [ValidateAntiForgeryToken]
+    [DisableRequestSizeLimit]
+    [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
+    public async Task<IActionResult> UploadHqVersion(int id, IFormFile? file, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await OwnedMedia(db).FirstOrDefaultAsync(m => m.Id == id, ct);
+        if (item is null)
+        {
+            this.FlashError("That item no longer exists.");
+            return RedirectToAction(nameof(Index));
+        }
+
+        if (file is null || file.Length == 0)
+        {
+            this.FlashWarning("Choose a file to upload.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        // Only "Best" advertises a second file; on any other profile the heal would rightly flag it.
+        if (item.Kind != MediaKind.Video || !ConversionProfiles.WantsHq(item.Profile))
+        {
+            this.FlashError($"The H.265 rendition is only offered on “{ConversionProfiles.Label(ConversionProfile.Best)}”.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        if (item.Status is MediaStatus.Uploaded or MediaStatus.Processing || queue.IsPending(item.Id))
+        {
+            this.FlashWarning("This video is still converting - wait for that to finish first.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        var maxBytes = await MaxUploadBytesAsync(ct);
+        if (maxBytes > 0 && file.Length > maxBytes)
+        {
+            this.FlashError($"That file is over the {MbLabel(maxBytes)} upload limit.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
+        var scratch = storage.ScratchDir;
+        var tmpIn = Path.Combine(scratch, $"tmp_{Guid.NewGuid():N}{Path.GetExtension(file.FileName)}");
+        var tmpOut = Path.Combine(scratch, $"tmp_{Guid.NewGuid():N}.mp4");
+        try
+        {
+            await using (var fs = System.IO.File.Create(tmpIn))
+            {
+                await file.CopyToAsync(fs, ct);
+            }
+
+            var (made, error) = await StageRenditionAsync(tmpIn, tmpOut, item,
+                p => MediaProcessor.CanKeepAsHq(p.VideoCodec, p.AudioCodec, p.PixFmt),
+                MediaProcessor.HqCodecSet,
+                "That file isn't an H.265 video we can offer. Encode it as H.265 4:2:0 (8- or 10-bit) with AAC or MP3 audio and try again.", ct);
+            if (made is null)
+            {
+                this.FlashError(error!);
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            // A source we can't describe exactly is one we never offer: browsers only SKIP the H.265 file
+            // when the codecs string tells them precisely what it is. The remux forced the hvc1 tag, so
+            // this only fails on an exotic profile (Rext, 4:4:4 snuck past as e.g. a mislabeled stream).
+            if (MediaProcessor.HevcCodecs(made) is not { } codecs)
+            {
+                this.FlashError("That H.265 file uses a profile browsers can't be told about, so it can't be offered safely. Encode it as Main or Main 10.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            if (queue.IsPending(item.Id))
+            {
+                this.FlashWarning("A conversion started while this uploaded - wait for it to finish, then try again.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
+            var hqSize = new FileInfo(tmpOut).Length; // before PutAsync - it moves the file away
+            await storage.PutAsync(hqName, tmpOut, ct);
+
+            var oldHq = item.HqFileName;
+            item.HqFileName = hqName;
+            item.HqCodecs = codecs;
+            item.HqSizeBytes = hqSize;
+            await db.SaveChangesAsync(ct);
+
+            // The old HQ file can be the ORIGINAL blob (an upload that already was a faststart hvc1 mp4);
+            // IsDerivedRendition is what keeps that one safe from this cleanup.
+            if (oldHq is not null && oldHq != hqName && ConversionProfiles.IsDerivedRendition(oldHq)
+                && !await db.MediaItems.AnyAsync(m => m.WebFileName == oldHq || m.HqFileName == oldHq, ct))
+            {
+                await storage.DeleteAsync(oldHq, ct);
+            }
+
+            logger.LogInformation("Owner-supplied H.265 rendition for {Slug}: {Codecs} {Bytes} bytes",
+                item.Slug, codecs, hqSize);
+            this.FlashSuccess("H.265 version saved. Devices that can decode it now take it ahead of the H.264 copy.");
+        }
+        finally
+        {
+            TryDeleteLocal(tmpIn);
+            TryDeleteLocal(tmpOut);
+        }
+
+        return RedirectToAction(nameof(Edit), new { id });
+    }
+
+    /// <summary>
+    /// Holds an owner-supplied rendition to the same bar as a worker-made file: the caller's codec gate on
+    /// the probe, then the same lossless faststart remux every produced file goes through (whatever
+    /// container it arrived in), then <see cref="MediaProcessor.ValidateWebOutputAsync"/> - including the
+    /// duration check against the original, here enforced BOTH ways, because user input can be the wrong
+    /// video entirely and a longer one sails past the validator's truncation-only rule. Returns the probe
+    /// of the accepted mp4 now sitting at <paramref name="tmpOut"/>, or an error to flash.
+    /// </summary>
+    private async Task<(ProbeResult? Made, string? Error)> StageRenditionAsync(string tmpIn, string tmpOut,
+        MediaItem item, Func<ProbeResult, bool> accepts, IReadOnlyCollection<string> allowedCodecs,
+        string codecError, CancellationToken ct)
+    {
+        var probe = await processor.ProbeAsync(tmpIn, ct);
+        if (probe is null || !accepts(probe))
+        {
+            return (null, codecError);
+        }
+
+        if (!await processor.RemuxFastStartAsync(tmpIn, tmpOut, probe.VideoCodec, ct)
+            || await processor.ValidateWebOutputAsync(tmpOut, item.DurationSeconds, allowedCodecs, ct) is not { } made)
+        {
+            return (null, "That file couldn't be used - make sure it's the same video, fully encoded (its length must match the original).");
+        }
+
+        var madeDuration = made.VideoDuration ?? made.Duration;
+        if (item.DurationSeconds is > 1 && madeDuration is { } dur
+            && dur > item.DurationSeconds.Value + Math.Max(1.0, item.DurationSeconds.Value * 0.04))
+        {
+            return (null, "That file couldn't be used - it's longer than the original, so it doesn't look like the same video.");
+        }
+
+        return (made, null);
     }
 
     [HttpPost("media/{id:int}/delete")]

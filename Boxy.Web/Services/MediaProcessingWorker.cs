@@ -370,7 +370,7 @@ public class MediaProcessingWorker(
         // it. Only "Best" pays the extra file for it, and only an H.265 source has anything to give.
         if (ConversionProfiles.WantsHq(item.Profile))
         {
-            await ProduceHqAsync(item, probe, originalPath, expectedDuration, ct);
+            await ProduceHqAsync(item, probe, originalPath, expectedDuration, previous.HqFileName, ct);
         }
 
         // Record what came out, before FinishAsync (which is the save), so the file details view can show
@@ -513,33 +513,43 @@ public class MediaProcessingWorker(
     /// A failure here is never fatal. The H.264 file is already made, so the video plays for everyone; the
     /// worst case is that Apple viewers see the H.264 copy instead of the nicer original.
     /// </summary>
-    private async Task ProduceHqAsync(MediaItem item, ProbeResult probe, string originalPath, double? duration, CancellationToken ct)
+    private async Task ProduceHqAsync(MediaItem item, ProbeResult probe, string originalPath, double? duration,
+        string? previousHq, CancellationToken ct)
     {
-        if (!MediaProcessor.CanKeepAsHq(probe.VideoCodec, probe.AudioCodec, probe.PixFmt))
+        var canKeep = MediaProcessor.CanKeepAsHq(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
+        var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
+
+        // A sidecar that was already IN FORCE wins over everything below, including the as-is shortcut:
+        // that name being referenced means someone chose it (an owner-supplied rendition replacing the
+        // original's own H.265), and a reprocess must not quietly swap the offer back and delete it.
+        // An unreferenced leftover sidecar deliberately doesn't get this treatment - the as-is shortcut
+        // still collapses those to the original blob, and the cleanup then reclaims the redundant file.
+        var sidecarInForce = previousHq == hqName;
+        if (sidecarInForce && await TryAdoptSidecarAsync(item, hqName, duration, ct))
         {
             return;
         }
 
         // The upload IS the rendition: already an mp4 that streams, already tagged the way Safari demands.
-        if (IsProgressiveMp4(item.Extension, originalPath) && MediaProcessor.HevcCodecs(probe) is { } asIs)
+        if (canKeep && IsProgressiveMp4(item.Extension, originalPath) && MediaProcessor.HevcCodecs(probe) is { } asIs)
         {
             item.HqFileName = item.ContentHash + item.Extension;
             item.HqCodecs = asIs;
             return;
         }
 
-        var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
-        if (await storage.ExistsAsync(hqName, ct))
+        // Adoption runs even when the SOURCE has no H.265 to give: an owner-supplied rendition
+        // (Edit -> upload H.265 version) lives under this name for exactly such a source, and a reprocess
+        // must adopt it, not throw it away. Validation still decides - a stale or wrong file is rebuilt
+        // or dropped the same as ever.
+        if (!sidecarInForce && await TryAdoptSidecarAsync(item, hqName, duration, ct))
         {
-            using var existing = await storage.GetLocalCopyAsync(hqName, ct);
-            if (existing is not null
-                && await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct) is { } reused
-                && MediaProcessor.HevcCodecs(reused) is { } reusedCodecs)
-            {
-                item.HqFileName = hqName;
-                item.HqCodecs = reusedCodecs;
-                return;
-            }
+            return;
+        }
+
+        if (!canKeep)
+        {
+            return;
         }
 
         var scratch = ScratchOut(".mp4");
@@ -565,6 +575,29 @@ public class MediaProcessingWorker(
         {
             TryDeleteLocal(scratch);
         }
+    }
+
+    /// <summary>Adopt an existing <c>{hash}-hevc.mp4</c> sidecar when it validates and can be described
+    /// exactly. It can outlive its maker (an earlier run, a dedup twin) and it can be owner-supplied for
+    /// a source that has no H.265 of its own. Sets the item's HQ fields and returns true on success.</summary>
+    private async Task<bool> TryAdoptSidecarAsync(MediaItem item, string hqName, double? duration, CancellationToken ct)
+    {
+        if (!await storage.ExistsAsync(hqName, ct))
+        {
+            return false;
+        }
+
+        using var existing = await storage.GetLocalCopyAsync(hqName, ct);
+        if (existing is null
+            || await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct) is not { } reused
+            || MediaProcessor.HevcCodecs(reused) is not { } codecs)
+        {
+            return false;
+        }
+
+        item.HqFileName = hqName;
+        item.HqCodecs = codecs;
+        return true;
     }
 
     /// <summary>
