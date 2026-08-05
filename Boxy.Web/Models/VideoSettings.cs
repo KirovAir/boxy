@@ -83,6 +83,13 @@ public class VideoSettings
     /// off, or drop posters too to avoid every ffmpeg call.</summary>
     public bool GeneratePosters { get; set; } = true;
 
+    /// <summary>Whether to also package each converted video as HLS, which is what makes playback and
+    /// scrubbing behave on iPhones and Safari over slow connections. A lossless repackage (seconds of IO,
+    /// no encode), but it roughly doubles the disk a video's renditions take - that trade is why it is a
+    /// switch. On by default; turning it off stops packaging new conversions and drops the HLS files of
+    /// any video the worker touches after that.</summary>
+    public bool EnableHls { get; set; } = true;
+
     /// <summary>The x264 presets we accept, fastest-to-slowest. "placebo" is excluded on purpose.</summary>
     public static readonly string[] AllowedPresets =
     [
@@ -108,7 +115,8 @@ public class VideoSettings
             DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback,
             Encoder = Enum.IsDefined(Encoder) ? Encoder : VideoEncoder.Software,
             ConversionMode = Enum.IsDefined(ConversionMode) ? ConversionMode : ConversionMode.Full,
-            GeneratePosters = GeneratePosters
+            GeneratePosters = GeneratePosters,
+            EnableHls = EnableHls
         };
     }
 }

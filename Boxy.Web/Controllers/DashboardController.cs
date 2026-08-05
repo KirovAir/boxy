@@ -1232,6 +1232,21 @@ public class DashboardController(
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
+            // Safari's HLS copy must change the moment the mp4 does: repackage it from the exact bytes
+            // about to be stored - they are still local here - or clear it, so Safari falls back to
+            // progressive rather than keep serving the old video. The H.265 package is untouched: that
+            // rendition didn't change.
+            item.HlsCodecs = (await videoSettings.GetEffectiveAsync(ct)).EnableHls
+                ? await RepackageHlsAsync(item, tmpOut, ConversionProfiles.HlsWebVariant, MediaProcessor.UniversalCodecs, ct)
+                : null;
+            item.HlsWebStem = item.HlsCodecs is null
+                ? null
+                : ConversionProfiles.HlsStem(ConversionProfiles.HlsWebVariant, item.Profile);
+            if (item.HlsCodecs is null)
+            {
+                item.HlsHqCodecs = null; // no master playlist without the floor, so don't advertise the rest
+            }
+
             var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
             var webSize = new FileInfo(tmpOut).Length; // before PutAsync - it moves the file away
             await storage.PutAsync(webName, tmpOut, ct);
@@ -1277,6 +1292,9 @@ public class DashboardController(
                     await storage.DeleteAsync(stale, ct);
                 }
             }
+
+            await MediaBlobs.DeleteUnreferencedHlsAsync(db, storage, item.Id, item.ContentHash,
+                item.HlsWebStem, item.HlsHqCodecs is not null, ct);
 
             logger.LogInformation("Owner-supplied web version for {Slug}: {Codec} {Width}x{Height} {Bytes} bytes",
                 item.Slug, made.VideoCodec, made.Width, made.Height, item.WebSizeBytes);
@@ -1370,6 +1388,12 @@ public class DashboardController(
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
+            // Safari's HLS copy of this rendition must change along with it; a new package can only ride
+            // in a master playlist that exists, so without the web variant there is nothing to update.
+            item.HlsHqCodecs = item.HlsCodecs is not null && (await videoSettings.GetEffectiveAsync(ct)).EnableHls
+                ? await RepackageHlsAsync(item, tmpOut, ConversionProfiles.HlsHqVariant, MediaProcessor.HqCodecSet, ct)
+                : null;
+
             var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
             var hqSize = new FileInfo(tmpOut).Length; // before PutAsync - it moves the file away
             await storage.PutAsync(hqName, tmpOut, ct);
@@ -1388,6 +1412,9 @@ public class DashboardController(
                 await storage.DeleteAsync(oldHq, ct);
             }
 
+            await MediaBlobs.DeleteUnreferencedHlsAsync(db, storage, item.Id, item.ContentHash,
+                item.HlsWebStem, item.HlsHqCodecs is not null, ct);
+
             logger.LogInformation("Owner-supplied H.265 rendition for {Slug}: {Codecs} {Bytes} bytes",
                 item.Slug, codecs, hqSize);
             this.FlashSuccess("H.265 version saved. Devices that can decode it now take it ahead of the H.264 copy.");
@@ -1399,6 +1426,49 @@ public class DashboardController(
         }
 
         return RedirectToAction(nameof(Edit), new { id });
+    }
+
+    /// <summary>
+    /// Repackage one HLS variant from a freshly staged rendition (still local), mirroring the worker's
+    /// packaging bar: package, validate, store media before playlist. Returns the variant's CODECS value,
+    /// or null when anything declined - the caller then simply stops advertising HLS and the share plays
+    /// progressive, exactly like a video the worker never packaged.
+    /// </summary>
+    private async Task<string?> RepackageHlsAsync(MediaItem item, string localSource, string variant,
+        IReadOnlyCollection<string> allowedCodecs, CancellationToken ct)
+    {
+        var workDir = Path.Combine(storage.ScratchDir, $"tmp_hls_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(workDir);
+            var playlist = Path.Combine(workDir, variant + ".m3u8");
+            if (!await processor.PackageHlsAsync(localSource, workDir, variant, variant, ct)
+                || await processor.ValidateHlsAsync(playlist, item.DurationSeconds, allowedCodecs, ct) is not { } packaged
+                || MediaProcessor.HlsVariantCodecs(packaged) is not { } codecs)
+            {
+                return null;
+            }
+
+            var stem = ConversionProfiles.HlsStem(variant, item.Profile);
+            await storage.PutAsync(ConversionProfiles.HlsMediaName(item.ContentHash, stem),
+                Path.Combine(workDir, variant + ".m4s"), ct);
+            await storage.PutAsync(ConversionProfiles.HlsPlaylistName(item.ContentHash, stem), playlist, ct);
+            return codecs;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(workDir))
+                {
+                    Directory.Delete(workDir, true);
+                }
+            }
+            catch
+            {
+                /* best-effort scratch cleanup; the periodic sweep catches leftovers */
+            }
+        }
     }
 
     /// <summary>

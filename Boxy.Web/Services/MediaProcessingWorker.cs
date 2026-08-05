@@ -278,8 +278,10 @@ public class MediaProcessingWorker(
             ConversionProfiles.Transcodes(item.Profile) ? $", {videoCfg.Encoder} encoder" : "",
             queue.Depth > 0 ? $" ({queue.Depth} more queued)" : "");
 
-        var previous = (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs);
+        var previous = (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs,
+            item.HlsCodecs, item.HlsHqCodecs, item.HlsWebStem);
         item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
+        item.HlsCodecs = item.HlsHqCodecs = item.HlsWebStem = null;
 
         // "Don't convert it": ship exactly what was uploaded. Serve an already-faststart mp4 as-is, else
         // stream-copy the source into a faststart mp4 so it at least streams (codec untouched); if even
@@ -347,9 +349,11 @@ public class MediaProcessingWorker(
             if (produced is null)
             {
                 // Never take a live, published video offline because a reprocess failed - leave it serving
-                // what it already had rather than 404ing it, and record the reason so the heal doesn't
-                // retry this doomed item on every startup.
-                (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs) = previous;
+                // what it already had rather than 404ing it (the HLS columns included: their blobs are
+                // untouched, the web lane fails before packaging runs), and record the reason so the heal
+                // doesn't retry this doomed item on every startup.
+                (item.WebFileName, item.WebCodec, item.HqFileName, item.HqCodecs,
+                    item.HlsCodecs, item.HlsHqCodecs, item.HlsWebStem) = previous;
                 await FailAsync(db, item, "Could not produce a playable web version", healing, ct);
                 return;
             }
@@ -371,6 +375,15 @@ public class MediaProcessingWorker(
         if (ConversionProfiles.WantsHq(item.Profile))
         {
             await ProduceHqAsync(item, probe, originalPath, expectedDuration, previous.HqFileName, ct);
+        }
+
+        // Repackage what the two lanes serve as HLS, which is what makes playback and scrubbing behave on
+        // Safari over slow connections (its progressive pipeline wedges; its HLS pipeline doesn't). A
+        // lossless stream-copy, so it is IO-bound and cheap, and always done fresh: the inputs may be new
+        // bytes under the same names, and repackaging costs less than proving reuse would be safe.
+        if (videoCfg.EnableHls && item.WebCodec == "h264")
+        {
+            await ProduceHlsAsync(item, expectedDuration, ct);
         }
 
         // Record what came out, before FinishAsync (which is the save), so the file details view can show
@@ -441,6 +454,12 @@ public class MediaProcessingWorker(
                 await storage.DeleteAsync(stale, ct);
             }
         }
+
+        // A run that ended without (part of) the HLS package - the profile stopped converting, packaging
+        // switched off, a variant declined, or the lane's stem changed with the profile - must drop the
+        // unclaimed files now or never: nothing can find them later.
+        await MediaBlobs.DeleteUnreferencedHlsAsync(db, storage, item.Id, item.ContentHash,
+            item.HlsWebStem, item.HlsHqCodecs is not null, ct);
     }
 
     /// <summary>
@@ -574,6 +593,99 @@ public class MediaProcessingWorker(
         finally
         {
             TryDeleteLocal(scratch);
+        }
+    }
+
+    /// <summary>
+    /// Packages the file each lane serves into an HLS variant: the H.264 web lane always, the H.265
+    /// rendition when the item carries one. Sets <see cref="MediaItem.HlsCodecs"/>/<see cref="MediaItem.HlsHqCodecs"/>
+    /// to the CODECS values <c>/hls/{slug}/master.m3u8</c> is generated from, or leaves them null on any
+    /// failure - never fatal, the video simply keeps playing progressive like it always did.
+    /// </summary>
+    private async Task ProduceHlsAsync(MediaItem item, double? duration, CancellationToken ct)
+    {
+        // Package the exact bytes each lane serves: the produced web file, or the original when the
+        // upload itself is the servable file. Same for the H.265 side, where the rendition can BE the
+        // original blob.
+        var webSource = item.WebFileName ?? item.ContentHash + item.Extension;
+        item.HlsCodecs = await PackageHlsVariantAsync(item, webSource, ConversionProfiles.HlsWebVariant,
+            MediaProcessor.UniversalCodecs, duration, ct);
+        item.HlsWebStem = item.HlsCodecs is null
+            ? null
+            : ConversionProfiles.HlsStem(ConversionProfiles.HlsWebVariant, item.Profile);
+
+        // No H.264 playlist means no master playlist at all, so the H.265 variant has nothing to ride in.
+        if (item.HlsCodecs is null || item.HqFileName is null || item.HqCodecs is null)
+        {
+            return;
+        }
+
+        item.HlsHqCodecs = await PackageHlsVariantAsync(item, item.HqFileName, ConversionProfiles.HlsHqVariant,
+            MediaProcessor.HqCodecSet, duration, ct);
+    }
+
+    /// <summary>
+    /// One variant: stream-copy the source blob into <c>{hash}-{variant}.m4s</c> + its playlist, validate
+    /// the result at the same bar as any produced rendition, and store both. Returns the variant's CODECS
+    /// value probed from the packaged playlist itself, or null when anything along the way declined.
+    /// </summary>
+    private async Task<string?> PackageHlsVariantAsync(MediaItem item, string sourceName, string variant,
+        IReadOnlyCollection<string> allowedCodecs, double? duration, CancellationToken ct)
+    {
+        // A scratch DIRECTORY, not a file: ffmpeg writes the segment name verbatim into the playlist as
+        // its URI, so the outputs must be bare relative names in a directory of their own. The tmp_
+        // prefix keeps it inside the stale-scratch sweep like every other temp artifact.
+        var workDir = Path.Combine(storage.ScratchDir, $"tmp_hls_{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(workDir);
+            using var source = await storage.GetLocalCopyAsync(sourceName, ct);
+            if (source is null)
+            {
+                return null;
+            }
+
+            var playlist = Path.Combine(workDir, variant + ".m3u8");
+            // The variant names ARE the codec names, so the variant doubles as the tag hint.
+            if (!await processor.PackageHlsAsync(source.Path, workDir, variant, variant, ct)
+                || await processor.ValidateHlsAsync(playlist, duration, allowedCodecs, ct) is not { } packaged
+                || MediaProcessor.HlsVariantCodecs(packaged) is not { } codecs)
+            {
+                logger.LogWarning("No {Variant} HLS variant for {Slug}; it keeps playing progressive", variant, item.Slug);
+                return null;
+            }
+
+            // Media first, playlist second: a playlist is the entry point, so it must never exist ahead
+            // of the bytes it points at. Stored under the LANE's stem (public URIs keep the bare variant
+            // name), so dedup twins on different profiles never overwrite each other's package.
+            var stem = ConversionProfiles.HlsStem(variant, item.Profile);
+            await storage.PutAsync(ConversionProfiles.HlsMediaName(item.ContentHash, stem),
+                Path.Combine(workDir, variant + ".m4s"), ct);
+            await storage.PutAsync(ConversionProfiles.HlsPlaylistName(item.ContentHash, stem), playlist, ct);
+            return codecs;
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // genuine app shutdown - let it propagate
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "HLS packaging failed for {Slug} ({Variant})", item.Slug, variant);
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(workDir))
+                {
+                    Directory.Delete(workDir, true);
+                }
+            }
+            catch
+            {
+                /* best-effort scratch cleanup; the periodic sweep catches leftovers */
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 using Boxy.Data.Entities;
 using Boxy.Web;
+using Boxy.Web.Controllers;
 using Boxy.Web.Models;
 using Boxy.Web.Services;
 
@@ -125,6 +126,88 @@ public class MediaLogicTests
     }
 
     [TestMethod]
+    public void Avc1Codecs_DescribesOnlyWhatItCanStateHonestly()
+    {
+        // Same philosophy as HevcCodecs: the profiles we recognise, from a probe of the served file.
+        Assert.AreEqual("avc1.640028", MediaProcessor.Avc1Codecs(Probe("h264", "yuv420p", "High", 40, "avc1")));
+        Assert.AreEqual("avc1.4D401F", MediaProcessor.Avc1Codecs(Probe("h264", "yuv420p", "Main", 31, "avc1")));
+        Assert.AreEqual("avc1.42E01E", MediaProcessor.Avc1Codecs(Probe("h264", "yuv420p", "Constrained Baseline", 30, "avc1")));
+
+        Assert.IsNull(MediaProcessor.Avc1Codecs(Probe("h264", "yuv420p10le", "High 10", 40, "avc1")));
+        Assert.IsNull(MediaProcessor.Avc1Codecs(Probe("h264", "yuv420p", "High", null, "avc1")));
+        Assert.IsNull(MediaProcessor.Avc1Codecs(Probe("hevc", "yuv420p", "Main", 93, "hvc1")));
+    }
+
+    [TestMethod]
+    public void HlsVariantCodecs_NamesVideoAndAudio()
+    {
+        Assert.AreEqual("avc1.640028,mp4a.40.2",
+            MediaProcessor.HlsVariantCodecs(Probe("h264", "yuv420p", "High", 40, "avc1")));
+        Assert.AreEqual("hvc1.2.4.L120.B0,mp4a.40.2",
+            MediaProcessor.HlsVariantCodecs(Probe("hevc", "yuv420p10le", "Main 10", 120, "hvc1")));
+
+        // No audio track: the video stands alone. MP3 rides along under its own object type.
+        Assert.AreEqual("avc1.640028",
+            MediaProcessor.HlsVariantCodecs(new ProbeResult(1920, 1080, 10, "h264", null, "yuv420p", 10, null, null, "High", 40, "avc1")));
+        Assert.AreEqual("avc1.640028,mp4a.40.34",
+            MediaProcessor.HlsVariantCodecs(new ProbeResult(1920, 1080, 10, "h264", "mp3", "yuv420p", 10, null, null, "High", 40, "avc1")));
+
+        // A video we can't describe is a variant we never offer.
+        Assert.IsNull(MediaProcessor.HlsVariantCodecs(Probe("hevc", "yuv420p", "Main", 93, "hev1")));
+    }
+
+    [TestMethod]
+    public void MasterPlaylist_OffersHevcFirstAndH264AsTheFloor()
+    {
+        var item = new MediaItem
+        {
+            HlsCodecs = "avc1.640028,mp4a.40.2", HlsHqCodecs = "hvc1.2.4.L120.B0,mp4a.40.2",
+            WebSizeBytes = 465_799_614, HqSizeBytes = 392_660_430, DurationSeconds = 602.367,
+            Width = 1080, Height = 1920, WebWidth = 1080, WebHeight = 1920
+        };
+
+        var master = MediaController.MasterPlaylist(item);
+        StringAssert.StartsWith(master, "#EXTM3U");
+        StringAssert.Contains(master, "CODECS=\"hvc1.2.4.L120.B0,mp4a.40.2\"");
+        StringAssert.Contains(master, "CODECS=\"avc1.640028,mp4a.40.2\"");
+        StringAssert.Contains(master, ",RESOLUTION=1080x1920");
+        Assert.IsTrue(master.IndexOf("hevc.m3u8", StringComparison.Ordinal) < master.IndexOf("h264.m3u8", StringComparison.Ordinal),
+            "the variant a capable device should take comes first");
+
+        // The average is the honest number we record and is declared as such; BANDWIDTH itself is the
+        // format's PEAK figure, so it carries a conservative margin over the mean.
+        var avg = (long)(465_799_614L * 8 / 602.367);
+        StringAssert.Contains(master, $"BANDWIDTH={avg * 3 / 2},AVERAGE-BANDWIDTH={avg}");
+
+        // Without an H.265 variant the master offers just the floor.
+        item.HlsHqCodecs = null;
+        Assert.IsFalse(MediaController.MasterPlaylist(item).Contains("hevc.m3u8"));
+    }
+
+    [TestMethod]
+    public void OnlyNativeHlsBrowsersGetTheHlsSource()
+    {
+        // iOS is WebKit whatever the wrapper - Chrome-on-iOS included.
+        Assert.IsTrue(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"));
+        Assert.IsTrue(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.0.0 Mobile/15E148 Safari/604.1"));
+        // Real Safari on the Mac; an iPad in desktop mode reports exactly this, correctly so.
+        Assert.IsTrue(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"));
+
+        // The Chromium family carries "Safari" in its UA but no "Version/" - and it answers "maybe" for
+        // the HLS MIME type while hanging on it forever, which is why this check exists at all.
+        Assert.IsFalse(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"));
+        Assert.IsFalse(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"));
+        Assert.IsFalse(ShareController.IsNativeHlsBrowser(
+            "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0"));
+        Assert.IsFalse(ShareController.IsNativeHlsBrowser(null));
+    }
+
+    [TestMethod]
     public void EveryLaneGetsItsOwnBlobName()
     {
         // Blob names are content-addressed, so two uploads of the same bytes under different profiles land
@@ -150,6 +233,12 @@ public class MediaLogicTests
         // item replaced its web file and then declined to delete the old one, because it no longer
         // recognised it as something of ours. That leaked most of a gigabyte on a live instance.
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-web.mp4"));
+
+        // The HLS package: per variant a single-file media blob and its playlist, both ours to delete.
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-h264.m4s"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-h264.m3u8"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.m4s"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.m3u8"));
 
         // The load-bearing case: HqFileName points at the ORIGINAL when the upload is already a faststart
         // hvc1 mp4. Cleaning up a stale rendition must never treat that as its own file to delete - after a

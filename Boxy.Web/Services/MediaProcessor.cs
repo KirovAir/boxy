@@ -464,6 +464,54 @@ public class MediaProcessor(
     }
 
     /// <summary>
+    /// Packages a finished rendition into HLS, losslessly: a stream-copy into ONE fragmented-mp4 file
+    /// (<c>{variant}.m4s</c>) plus a byte-range playlist (<c>{variant}.m3u8</c>), written into
+    /// <paramref name="workDir"/>. Single-file because a thousand tiny segment blobs would fight the
+    /// content-addressed store; byte ranges ride the range serving we already have. fMP4 rather than TS
+    /// because Apple's authoring spec requires it for HEVC, and one segment format is enough.
+    ///
+    /// The output names are deliberately relative (ffmpeg runs inside <paramref name="workDir"/>): whatever
+    /// is passed as the segment name is written verbatim into the playlist as its URI, and the playlist is
+    /// served from <c>/hls/{slug}/</c> where only a bare relative name resolves.
+    /// </summary>
+    public async Task<bool> PackageHlsAsync(string input, string workDir, string variant, string? videoCodec,
+        CancellationToken ct = default)
+    {
+        // hvc1, again: fmp4 carries the tag through, and Safari's HLS stack is no more forgiving of hev1
+        // than its mp4 stack is.
+        var tag = videoCodec == "hevc" ? "-tag:v hvc1 " : "";
+        var (code, _, err) = await RunAsync(FfmpegPath,
+            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -c copy {tag}"
+            + $"-f hls -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 -hls_flags single_file "
+            + $"-hls_segment_filename {variant}.m4s {variant}.m3u8",
+            TranscodeTimeout, ct, workingDir: workDir);
+        if (code != 0)
+        {
+            logger.LogWarning("HLS packaging failed for {Path}: {Err}", input, Tail(err));
+        }
+
+        return code == 0 && new FileInfo(Path.Combine(workDir, variant + ".m4s")) is { Exists: true, Length: > 0 };
+    }
+
+    /// <summary>
+    /// Re-probes a packaged HLS playlist (ffprobe follows it into the segments) and confirms it carries the
+    /// codec it should at the full length of the source - the same bar <see cref="ValidateWebOutputAsync"/>
+    /// holds an mp4 to, minus the faststart check that has no meaning for a playlist. Returns the probe so
+    /// the caller can build the master-playlist CODECS value from the file it will actually serve.
+    /// </summary>
+    public async Task<ProbeResult?> ValidateHlsAsync(string playlistPath, double? sourceDuration,
+        IReadOnlyCollection<string> allowedCodecs, CancellationToken ct = default)
+    {
+        var probe = await ProbeAsync(playlistPath, ct);
+        if (probe?.VideoCodec is null || !allowedCodecs.Contains(probe.VideoCodec))
+        {
+            return null;
+        }
+
+        return IsTruncated(probe, sourceDuration, playlistPath) ? null : probe;
+    }
+
+    /// <summary>
     /// Re-probes a freshly produced file and confirms it is actually servable: an mp4 with its moov atom
     /// up front, in one of <paramref name="allowedCodecs"/>, whose duration matches the source (ffmpeg can
     /// exit 0 while writing a truncated file). Guards against shipping a file that "plays but stalls".
@@ -489,22 +537,27 @@ public class MediaProcessor(
             return null;
         }
 
-        // Compare the produced video-track length against the source video track (not container
-        // duration - a dropped commentary/data track can inflate that). Generous tolerance: a real
-        // mid-encode truncation loses far more than this.
+        return IsTruncated(probe, sourceDuration, path) ? null : probe;
+    }
+
+    // Compare the produced video-track length against the source video track (not container
+    // duration - a dropped commentary/data track can inflate that). Generous tolerance: a real
+    // mid-encode truncation loses far more than this.
+    private bool IsTruncated(ProbeResult probe, double? sourceDuration, string path)
+    {
         var actual = probe.VideoDuration ?? probe.Duration;
         if (sourceDuration is > 1 && actual is { } dur)
         {
             var tolerance = Math.Max(1.0, sourceDuration.Value * 0.04);
             if (dur < sourceDuration.Value - tolerance)
             {
-                logger.LogWarning("Web output {Path} is {Actual:0.0}s vs source {Source:0.0}s - truncated",
+                logger.LogWarning("Produced output {Path} is {Actual:0.0}s vs source {Source:0.0}s - truncated",
                     path, dur, sourceDuration.Value);
-                return null;
+                return true;
             }
         }
 
-        return probe;
+        return false;
     }
 
     /// <summary>
@@ -664,8 +717,59 @@ public class MediaProcessor(
         return idc == 0 ? null : $"hvc1.{idc}.{compatibility}.L{probe.Level}.B0";
     }
 
+    /// <summary>
+    /// The RFC 6381 codecs parameter for an H.264 stream, e.g. <c>avc1.640028</c>, or null when we cannot
+    /// state it honestly. Same rules as <see cref="HevcCodecs"/>: built from a probe of the file we serve,
+    /// profiles we don't recognise are not described, and what we can't describe we don't offer. The middle
+    /// byte pairs are the conventional constraint flags for each profile (the values every packager emits),
+    /// not something ffprobe reports.
+    /// </summary>
+    public static string? Avc1Codecs(ProbeResult probe)
+    {
+        if (probe.VideoCodec != "h264" || probe.CodecTag != "avc1" || probe.Level is not > 0)
+        {
+            return null;
+        }
+
+        var prefix = probe.Profile?.Trim().ToLowerInvariant() switch
+        {
+            "high" => "6400",
+            "main" => "4D40",
+            "baseline" or "constrained baseline" => "42E0",
+            _ => null
+        };
+
+        return prefix is null ? null : $"avc1.{prefix}{probe.Level:X2}";
+    }
+
+    /// <summary>
+    /// The full CODECS value for one HLS variant: the video (H.264 or H.265, whichever the probe carries)
+    /// plus its audio when there is any. Null when the video can't be described - the variant is then not
+    /// offered at all, because a master playlist without CODECS makes Safari guess, and a wrong guess is a
+    /// player error instead of a skipped variant. AAC is declared as AAC-LC (mp4a.40.2): it is what every
+    /// encode of ours produces, and what a copied AAC track overwhelmingly is.
+    /// </summary>
+    public static string? HlsVariantCodecs(ProbeResult probe)
+    {
+        var video = probe.VideoCodec == "h264" ? Avc1Codecs(probe) : HevcCodecs(probe);
+        if (video is null)
+        {
+            return null;
+        }
+
+        var audio = probe.AudioCodec switch
+        {
+            "aac" => "mp4a.40.2",
+            "mp3" => "mp4a.40.34",
+            _ => null
+        };
+
+        return audio is null ? video : $"{video},{audio}";
+    }
+
     private async Task<(int Code, string Stdout, string Stderr)> RunAsync(
-        string exe, string args, TimeSpan timeout, CancellationToken ct, Action<FfmpegProgress>? onProgress = null)
+        string exe, string args, TimeSpan timeout, CancellationToken ct, Action<FfmpegProgress>? onProgress = null,
+        string? workingDir = null)
     {
         using var proc = new Process
         {
@@ -673,6 +777,9 @@ public class MediaProcessor(
             {
                 FileName = exe,
                 Arguments = args,
+                // Set for HLS packaging, whose output names must be RELATIVE (they end up verbatim as
+                // playlist URIs); everything else passes absolute paths and leaves this at the default.
+                WorkingDirectory = workingDir ?? string.Empty,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

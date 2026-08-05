@@ -67,5 +67,40 @@ public static class MediaBlobs
                 await storage.DeleteAsync(rendition, ct);
             }
         }
+
+        await DeleteUnreferencedHlsAsync(db, storage, itemId, contentHash, null, false, ct);
+    }
+
+    /// <summary>
+    /// Drop the HLS pairs on this hash that no lane claims any more. The HLS package has no filename
+    /// column - its names ride the hash and the lane's stem - so "claimed" is derived: this item's own
+    /// current lane (when the caller still has one) plus every other row on the hash that advertises the
+    /// variant, each through its own profile's stem. Swept per stem, so a profile switch can't strand the
+    /// old lane's pair, and deleting names that never existed is a no-op.
+    /// </summary>
+    public static async Task DeleteUnreferencedHlsAsync(AppDbContext db, IBlobStore storage, int itemId,
+        string contentHash, string? ownWebStem, bool ownHq, CancellationToken ct = default)
+    {
+        var twins = await db.MediaItems
+            .Where(m => m.Id != itemId && m.ContentHash == contentHash && (m.HlsCodecs != null || m.HlsHqCodecs != null))
+            .Select(m => new { m.HlsWebStem, m.HlsHqCodecs })
+            .ToListAsync(ct);
+
+        foreach (var stem in ConversionProfiles.HlsWebStems)
+        {
+            var claimed = stem == ownWebStem || twins.Any(t => t.HlsWebStem == stem);
+            if (!claimed)
+            {
+                await storage.DeleteAsync(ConversionProfiles.HlsPlaylistName(contentHash, stem), ct);
+                await storage.DeleteAsync(ConversionProfiles.HlsMediaName(contentHash, stem), ct);
+            }
+        }
+
+        if (!ownHq && !twins.Any(t => t.HlsHqCodecs != null))
+        {
+            var stem = "-" + ConversionProfiles.HlsHqVariant;
+            await storage.DeleteAsync(ConversionProfiles.HlsPlaylistName(contentHash, stem), ct);
+            await storage.DeleteAsync(ConversionProfiles.HlsMediaName(contentHash, stem), ct);
+        }
     }
 }

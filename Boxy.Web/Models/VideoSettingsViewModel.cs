@@ -22,6 +22,9 @@ public class VideoSettingsViewModel
     /// <summary>Whether posters/thumbnails are generated at all - independent of the conversion mode.</summary>
     public required bool GeneratePosters { get; init; }
 
+    /// <summary>Whether converted videos are also packaged as HLS for Safari/iOS.</summary>
+    public required bool EnableHls { get; init; }
+
     /// <summary>Whether this server actually managed to encode a frame on its GPU at startup. When false the
     /// hardware option is shown disabled with the reason, rather than silently doing nothing when picked.</summary>
     public required bool GpuAvailable { get; init; }

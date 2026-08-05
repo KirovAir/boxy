@@ -152,6 +152,26 @@ public class MediaItem : AuditableEntity
     /// <summary>Content-addressed poster/thumbnail (jpg) extracted for the player and OG image.</summary>
     public string? PosterFileName { get; set; }
 
+    /// <summary>
+    /// The RFC 6381 CODECS value of the packaged H.264 HLS variant (e.g. <c>avc1.640028,mp4a.40.2</c>),
+    /// probed from the packaged playlist. Non-null is what says "this item has HLS": the media lives at
+    /// <c>{ContentHash}-h264.m4s</c> with its playlist beside it, and <c>/hls/{slug}/master.m3u8</c> is
+    /// generated from these columns. Null for items packaged before HLS existed, images, and profiles
+    /// that serve the upload untouched.
+    /// </summary>
+    public string? HlsCodecs { get; set; }
+
+    /// <summary>The same for the H.265 variant (<c>{ContentHash}-hevc.m4s</c>), offered in the master
+    /// playlist ahead of the H.264 one so a capable device takes it. Null when there is none.</summary>
+    public string? HlsHqCodecs { get; set; }
+
+    /// <summary>The lane stem the H.264 HLS pair was packaged under (<c>-h264</c> / <c>-h264-full</c>),
+    /// RECORDED rather than derived from <see cref="Profile"/>: a "convert again" saves the new profile
+    /// before the worker runs, and for that whole window the package on disk is still the old lane's.
+    /// Serving maps through this, so viewers keep streaming the package that actually exists. Written and
+    /// cleared together with <see cref="HlsCodecs"/>.</summary>
+    public string? HlsWebStem { get; set; }
+
     // ── Encode provenance ───────────────────────────────────────────────────────────────────────────────
     // What the last successful conversion actually produced, recorded so the file details view can show it
     // (and the completion log reports the same facts). Everything here is null/false until an item has been

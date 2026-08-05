@@ -128,6 +128,115 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         return item.Extension is ".mp4" or ".m4v" or ".mov" ? "video/mp4" : item.ContentType;
     }
 
+    /// <summary>
+    /// The same video, as HLS - the form Safari's media stack treats as first class, which is what makes
+    /// scrubbing behave on iPhones over slow connections (its progressive pipeline wedges and loses the
+    /// duration; its HLS pipeline doesn't). <c>master.m3u8</c> is generated here from the item's recorded
+    /// facts; the variant playlists and their single-file media ride the blob store like every rendition,
+    /// under the same visibility, password and Ready gates as <c>/f/{slug}</c>. Only names this method
+    /// spells out are servable, so the path segment can't reach into the store.
+    /// </summary>
+    [HttpGet("/hls/{slug}/{file}")]
+    public async Task<IActionResult> Hls(string slug, string file)
+    {
+        var item = await LoadVisibleAsync(slug);
+        if (item?.HlsCodecs is null || PasswordLocked(item))
+        {
+            return NotFound();
+        }
+
+        // Same rule as /f/: before Ready these names can still change identity mid-request; the owner may
+        // preview their own.
+        if (item.Status != MediaStatus.Ready && !CanManage(item))
+        {
+            return NotFound();
+        }
+
+        Response.Headers.XContentTypeOptions = "nosniff";
+        // Playlists and segment ranges are re-requested by the player as it goes; a replaced rendition
+        // must never be stitched together from cached pieces of the old one, so nothing here caches hard.
+        Response.Headers.CacheControl = "private, no-cache";
+
+        if (file == "master.m3u8")
+        {
+            return Content(MasterPlaylist(item), "application/vnd.apple.mpegurl");
+        }
+
+        // {variant}.m3u8 / {variant}.m4s, and only for a variant this item actually advertises: the codecs
+        // column is the gate, the blob is the payload.
+        var (variant, playlist) = file switch
+        {
+            "h264.m3u8" => (ConversionProfiles.HlsWebVariant, true),
+            "h264.m4s" => (ConversionProfiles.HlsWebVariant, false),
+            "hevc.m3u8" when item.HlsHqCodecs is not null => (ConversionProfiles.HlsHqVariant, true),
+            "hevc.m4s" when item.HlsHqCodecs is not null => (ConversionProfiles.HlsHqVariant, false),
+            _ => (null, false)
+        };
+        if (variant is null)
+        {
+            return NotFound();
+        }
+
+        // The public names are bare variants; the stored names ride the RECORDED lane stem, not the
+        // profile - a "convert again" flips the profile before the worker has repackaged, and for that
+        // whole window the package that exists is the old lane's.
+        var stem = variant == ConversionProfiles.HlsWebVariant
+            ? item.HlsWebStem
+            : ConversionProfiles.HlsStem(variant, item.Profile);
+        if (stem is null)
+        {
+            return NotFound();
+        }
+
+        var name = playlist
+            ? ConversionProfiles.HlsPlaylistName(item.ContentHash, stem)
+            : ConversionProfiles.HlsMediaName(item.ContentHash, stem);
+        var serve = await storage.GetServeAsync(name, HttpContext.RequestAborted);
+        if (serve is null)
+        {
+            return NotFound();
+        }
+
+        return BlobServing.Serve(serve, playlist ? "application/vnd.apple.mpegurl" : "video/mp4", null, !playlist);
+    }
+
+    /// <summary>
+    /// The master playlist, from facts the worker recorded when it packaged: the H.265 variant first (a
+    /// device that can decode it should take it), the H.264 one as the floor everything plays. CODECS is
+    /// what lets a player skip a variant it can't decode instead of trying it; BANDWIDTH is required by
+    /// the format, and the honest number we have is the file's own average bitrate.
+    /// </summary>
+    public static string MasterPlaylist(MediaItem item)
+    {
+        var sb = new System.Text.StringBuilder("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n");
+
+        if (item.HlsHqCodecs is not null)
+        {
+            sb.Append($"#EXT-X-STREAM-INF:{Bandwidth(item.HqSizeBytes, item.DurationSeconds)}"
+                      + $",CODECS=\"{item.HlsHqCodecs}\"{Resolution(item.Width, item.Height)}\nhevc.m3u8\n");
+        }
+
+        sb.Append($"#EXT-X-STREAM-INF:{Bandwidth(item.WebSizeBytes, item.DurationSeconds)}"
+                  + $",CODECS=\"{item.HlsCodecs}\"{Resolution(item.WebWidth ?? item.Width, item.WebHeight ?? item.Height)}\nh264.m3u8\n");
+        return sb.ToString();
+    }
+
+    private static string Bandwidth(long? sizeBytes, double? duration)
+    {
+        // BANDWIDTH is the format's required PEAK figure, and the honest number we record is the file's
+        // average - so the average is declared as what it is, and the peak as a conservative multiple of
+        // it: VBR video overshoots its mean on action scenes, and underreporting would let a player pick a
+        // variant its connection can't actually hold. The last-resort constant beats an invalid playlist
+        // for an item missing these facts (there should be none: the worker records them when it packages).
+        var avg = sizeBytes is > 0 && duration is > 1 ? (long)(sizeBytes.Value * 8 / duration.Value) : 8_000_000;
+        return $"BANDWIDTH={avg * 3 / 2},AVERAGE-BANDWIDTH={avg}";
+    }
+
+    private static string Resolution(int? width, int? height)
+    {
+        return width is > 0 && height is > 0 ? $",RESOLUTION={width}x{height}" : "";
+    }
+
     /// <summary>True for whoever may manage this item's bytes before it's public: the account that
     /// owns the share, the account that owns the box it was dropped into, or the anonymous visitor
     /// who uploaded it (matched by their <c>boxy_uid</c> cookie). Requires <c>Bucket</c> to be loaded.</summary>

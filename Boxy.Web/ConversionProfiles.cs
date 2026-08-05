@@ -148,6 +148,39 @@ public static class ConversionProfiles
     /// <summary>The suffix of the kept H.265 rendition. Not per-profile: only one profile makes one.</summary>
     public const string HqSuffix = "-hevc.mp4";
 
+    /// <summary>
+    /// The HLS package: per variant one single-file fragmented mp4 and one byte-range playlist, derived
+    /// losslessly from the rendition that lane already serves. The variant name doubles as the relative URI
+    /// inside the playlists, which is what <c>/hls/{slug}/{variant}.m4s</c> resolves - but the STORED names
+    /// ride the lane's own stem (<see cref="HlsStem"/>), for the same reason the lanes have distinct
+    /// suffixes at all: two items with identical content but different profiles must never overwrite each
+    /// other's output. The endpoint maps the public name through the item's profile.
+    /// </summary>
+    public const string HlsWebVariant = "h264";
+
+    public const string HlsHqVariant = "hevc";
+
+    /// <summary>The storage stem of a variant's HLS pair: the web variant follows its lane
+    /// (<c>-h264</c> / <c>-h264-full</c>), the H.265 one has a single lane like its mp4 sidecar.</summary>
+    public static string HlsStem(string variant, ConversionProfile profile)
+    {
+        return variant == HlsWebVariant ? WebSuffix(profile)[..^".mp4".Length] : "-" + HlsHqVariant;
+    }
+
+    /// <summary>Every web-lane stem a transcoding profile can produce - what the cleanups sweep.</summary>
+    public static readonly string[] HlsWebStems =
+        Choices.Where(Transcodes).Select(p => HlsStem(HlsWebVariant, p)).Distinct().ToArray();
+
+    public static string HlsPlaylistName(string contentHash, string stem)
+    {
+        return $"{contentHash}{stem}.m3u8";
+    }
+
+    public static string HlsMediaName(string contentHash, string stem)
+    {
+        return $"{contentHash}{stem}.m4s";
+    }
+
     /// <summary>The name every lane wrote to before the lanes had names of their own. Still ours, and still
     /// on disk on any instance that predates the split, so it MUST be listed here: an item healed out of
     /// the old world replaces its web file, and a cleanup that doesn't recognise the old name as a
@@ -156,7 +189,8 @@ public static class ConversionProfiles
     private const string LegacyWebSuffix = "-web.mp4";
 
     private static readonly string[] RenditionSuffixes =
-        ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix, LegacyWebSuffix];
+        ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix, LegacyWebSuffix,
+         "-h264.m4s", "-h264.m3u8", "-h264-full.m4s", "-h264-full.m3u8", "-hevc.m4s", "-hevc.m3u8"];
 
     /// <summary>What an item currently has on disk, against what its profile says it should have. Just
     /// enough columns to answer <see cref="NeedsReprocessing"/> without loading whole entities.</summary>

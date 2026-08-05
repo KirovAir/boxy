@@ -95,10 +95,21 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
         // and a re-converted video is picked up the moment it changes.
         var fileUrl = $"{baseUrl}/f/{item.Slug}?v={item.WebVersion()}";
 
-        // Best first. The H.265 rendition names itself exactly so a browser without the decoder can skip
-        // it; the H.264 one names itself vaguely on purpose, because it is the source that must never be
-        // skipped. See VideoSource.
+        // Best first. HLS leads when the item has it and the browser's native stack genuinely is HLS: the
+        // form whose scrubbing survives a slow connection, and whose master playlist already offers both
+        // codecs, so Safari never needs the decode-error dance at all. This one is deliberately NOT left to
+        // <source> type selection like the rest: Chromium answers "maybe" to the HLS MIME type, selects the
+        // source, and then hangs on it forever without ever firing an error (measured; even the recovery
+        // script can't save that, because reload() re-runs the same selection). Misdetection here is safe
+        // in both directions - the mp4 sources are always right behind it. Then the H.265 rendition, naming
+        // itself exactly so a browser without the decoder can skip it; then the H.264 one, naming itself
+        // vaguely on purpose, because it is the source that must never be skipped. See VideoSource.
         var sources = new List<VideoSource>();
+        if (kind == MediaKind.Video && item.HlsCodecs is not null && IsNativeHlsBrowser(Request.Headers.UserAgent))
+        {
+            sources.Add(new VideoSource($"{baseUrl}/hls/{item.Slug}/master.m3u8", "application/vnd.apple.mpegurl"));
+        }
+
         if (kind == MediaKind.Video && item is { HqFileName: not null, HqCodecs: not null })
         {
             sources.Add(new VideoSource($"{baseUrl}/f/{item.Slug}?r=hq&v={item.HqVersion()}",
@@ -180,5 +191,29 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
         var name = username.ToLowerInvariant();
         return await q.FirstOrDefaultAsync(m =>
             m.Owner!.Username == name && (m.CustomSlug == s || m.Slug == s));
+    }
+
+    /// <summary>
+    /// Whether this browser's native media stack is genuinely HLS: anything on iOS (every browser there is
+    /// WebKit underneath, Chrome and Firefox included), and real Safari on the Mac - which an iPad in
+    /// desktop mode also reports, correctly so. "Version/" is what separates real Safari from the crowd of
+    /// browsers that merely carry "Safari" in their UA; the explicit exclusions catch the Chromium family,
+    /// which claims "maybe" for the HLS MIME type and then can't actually play it.
+    /// </summary>
+    public static bool IsNativeHlsBrowser(string? userAgent)
+    {
+        if (string.IsNullOrEmpty(userAgent))
+        {
+            return false;
+        }
+
+        if (userAgent.Contains("iPhone") || userAgent.Contains("iPad") || userAgent.Contains("iPod"))
+        {
+            return true;
+        }
+
+        return userAgent.Contains("Safari/") && userAgent.Contains("Version/")
+               && !userAgent.Contains("Chrome") && !userAgent.Contains("Chromium")
+               && !userAgent.Contains("Edg") && !userAgent.Contains("OPR");
     }
 }

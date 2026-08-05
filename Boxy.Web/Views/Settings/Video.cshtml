@@ -50,6 +50,18 @@
                 ffmpeg call on a minimal server; the gallery then falls back to a file-type icon.
             </div>
 
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="enableHls" value="true" class="form-check-input" id="hls"
+                       role="switch" @(Model.EnableHls ? "checked" : "")/>
+                <label class="form-check-label" for="hls">Package for iPhone and Safari (HLS)</label>
+            </div>
+            <div class="form-text mb-4">
+                Repackages each converted video into the streaming form Safari handles best, so playback and
+                scrubbing stay smooth on iPhones even over slow connections. No re-encode and no quality loss,
+                but it roughly doubles the disk a video's converted files take. Applies from the next
+                conversion; use Convert again on an existing video to add it.
+            </div>
+
             <label class="form-label" for="defaultProfile">Default conversion</label>
             <select name="defaultProfile" id="defaultProfile" class="form-select mb-1" style="max-width: 24rem;">
                 @foreach (var p in ConversionProfiles.Choices)
