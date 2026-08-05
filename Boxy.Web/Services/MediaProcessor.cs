@@ -685,6 +685,17 @@ public class MediaProcessor(
         logger.LogDebug("Running {Exe} {Args}", exe, args);
 
         proc.Start();
+        try
+        {
+            // Conversions share the box with playback, and a preset-slow encode at normal priority starves
+            // range requests until video stutters. Idle priority still gets ffmpeg every spare cycle.
+            proc.PriorityClass = ProcessPriorityClass.Idle;
+        }
+        catch (Exception)
+        {
+            // Best effort: a fast probe may already be gone.
+        }
+
         // stderr is always drained whole (its tail is the error message on failure). stdout is either read
         // whole, or - when the caller wants live progress and the command carries `-progress pipe:1` -
         // streamed line by line so each block turns into a callback while the encode is still running.
