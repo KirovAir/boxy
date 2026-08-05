@@ -338,7 +338,7 @@
                 </form>
 
                 @* For when converting here would take ages (or already failed): encode at home, hand it in. *@
-                if (ConversionProfiles.Transcodes(Model.Profile) && Model.Status != MediaStatus.Processing && Model.Status != MediaStatus.Uploaded)
+                if (Model.Status != MediaStatus.Processing && Model.Status != MediaStatus.Uploaded)
                 {
                     <details class="mb-3">
                         <summary class="small text-secondary" style="cursor:pointer">Upload your own conversion</summary>
@@ -349,9 +349,10 @@
                             <input type="file" name="file" accept=".mp4,.m4v,.mov,.mkv,video/*"
                                    class="form-control form-control-sm mb-2" required/>
                             <button type="submit" class="btn btn-sm btn-outline-primary">Upload web version</button>
-                            <div class="form-text">Converted it yourself on a faster machine? Upload it here and it
-                                replaces the web copy without any server conversion. H.264 with AAC audio, and it must
-                                be the same video. The original stays untouched.
+                            <div class="form-text">@(ConversionProfiles.Transcodes(Model.Profile)
+                                                      ? "Converted it yourself on a faster machine? Upload it here and it replaces the web copy without any server conversion."
+                                                      : "This video is served exactly as uploaded. Add your own H.264 and browsers that can't play the original get it instead - the original stays offered first, and nothing is re-encoded here.")
+                                H.264 with AAC audio, and it must be the same video. The original stays untouched.
                             </div>
                         </form>
                         @if (ConversionProfiles.WantsHq(Model.Profile))

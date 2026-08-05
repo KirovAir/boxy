@@ -1160,11 +1160,9 @@ public class DashboardController(
             return RedirectToAction(nameof(Edit), new { id });
         }
 
-        // "Don't convert it" serves the upload untouched; there is no web copy to replace, and the heal
-        // would rightly flag one (it checks that lane still carries the source's own codec).
-        if (item.Kind != MediaKind.Video || !ConversionProfiles.Transcodes(item.Profile))
+        if (item.Kind != MediaKind.Video)
         {
-            this.FlashError("This only applies to videos on a converting profile.");
+            this.FlashError("This only applies to videos.");
             return RedirectToAction(nameof(Edit), new { id });
         }
 
@@ -1210,6 +1208,27 @@ public class DashboardController(
             if (queue.IsPending(item.Id))
             {
                 this.FlashWarning("A conversion started while this uploaded - wait for it to finish, then try again.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
+            // "Don't convert it" has no web lane to swap - but an owner-supplied H.264 is the missing
+            // piece of the Best shape, with zero server encoding: this file becomes the universal lane
+            // and the original (H.265 and all) goes back to being offered first to devices that take it.
+            // The worker settles that second part via a backfill, because it needs the original (a big
+            // download on a remote store, so not for a request thread) - and for THIS item that is only
+            // probe, validate and stream-copy work: it adopts the file stored here, never re-encodes.
+            if (!ConversionProfiles.Transcodes(item.Profile))
+            {
+                var bestName = item.ContentHash + ConversionProfiles.WebSuffix(ConversionProfile.Best);
+                await storage.PutAsync(bestName, tmpOut, ct);
+                item.Profile = ConversionProfile.Best;
+                item.ErrorMessage = null;
+                await db.SaveChangesAsync(ct);
+                queue.EnqueueBackfill(item.Id);
+
+                logger.LogInformation("Owner-supplied web version for {Slug} (was as-uploaded): {Codec} {Width}x{Height}",
+                    item.Slug, made.VideoCodec, made.Width, made.Height);
+                this.FlashSuccess("Web version saved. Browsers that can't play the original get your H.264; the original is offered first where it plays. Settling now, no re-encode.");
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
