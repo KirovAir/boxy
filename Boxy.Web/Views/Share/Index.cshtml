@@ -203,10 +203,17 @@
         function reload() {
             var at = media.currentTime;
             var resume = !media.paused && !media.ended;
+            var scrubbed = false;
+            function noteScrub() { scrubbed = true; }
             media.load();
+            media.addEventListener('seeking', noteScrub);
             media.addEventListener('loadedmetadata', function seekBack() {
                 media.removeEventListener('loadedmetadata', seekBack);
-                if (at > 0) media.currentTime = at;
+                media.removeEventListener('seeking', noteScrub);
+                // Only restore the remembered spot if the viewer didn't scrub while the reload was in
+                // flight. Metadata can take seconds on a slow link, and warping them forward to a stale
+                // position they had already left is exactly the "it suddenly jumps way ahead" bug.
+                if (at > 0 && !scrubbed) media.currentTime = at;
                 if (resume) {
                     var p = media.play();
                     if (p && p.catch) p.catch(function () {});
@@ -271,7 +278,11 @@
                 attempts = 0; // real progress again: future hiccups may recover anew
             } else if (media.readyState < 3) { // below HAVE_FUTURE_DATA: starved, not just idle
                 stuckMs += 3000;
-                if (stuckMs >= 15000) {
+                // A seek that is still buffering on a slow link is not a dead pipeline, and reloading
+                // it refetches the moov and starts the wait over on that same slow link - the player
+                // visibly jumping around under the viewer's thumb. Give a pending seek three times the
+                // rope; a connection that actually died still trips it.
+                if (stuckMs >= (media.seeking ? 45000 : 15000)) {
                     stuckMs = 0;
                     recover();
                 }
