@@ -103,6 +103,11 @@
             <li><strong>HTTP/3 (QUIC):</strong> on by default in NPMplus, and it runs over UDP - which mobile and
                 cellular networks often throttle or mishandle. If uploads are smooth on Wi-Fi and desktop but
                 flaky on phones, disable HTTP/3 for this host (or globally) so it falls back to TCP.</li>
+            <li><strong>Visitor IPs:</strong> the share view log records the address the proxy reports. If every
+                view shows the proxy's own address (a Docker gateway like <span class="mono">172.17.0.1</span>),
+                the proxy isn't passing <span class="mono">X-Real-IP</span> /
+                <span class="mono">X-Forwarded-For</span> - a custom <span class="mono">location</span> block in
+                the Advanced config replaces the stock headers, so re-add them there.</li>
         </ul>
         <p class="small text-secondary mb-1">Example per-host nginx / NPMplus "Advanced" config:</p>
         <pre class="mono small bg-body-secondary rounded p-3 mb-0" style="overflow:auto;">client_max_body_size 0;          # 0 = unlimited (NPMplus default). Or a value above your largest upload.
@@ -111,7 +116,9 @@ proxy_http_version 1.1;          # required, else chunked bodies get buffered an
 client_body_buffer_size 16m;     # match the 16 MB chunk, else HTTP/2 uploads stall at a few MB/s
 client_body_timeout 600s;        # inactivity windows - raise only for slow/flaky mobile links
 proxy_send_timeout  600s;
-send_timeout        600s;</pre>
+send_timeout        600s;
+proxy_set_header X-Real-IP $remote_addr;                    # who is actually visiting, for the view log
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</pre>
     </div>
 </div>
 
