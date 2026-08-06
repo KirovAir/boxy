@@ -21,7 +21,7 @@
         <p class="text-secondary small mb-3">
             @Model.Item.Views view@(Model.Item.Views == 1 ? "" : "s") total. Every visit to the share page counts,
             repeat visitors included; link-preview bots don't. Your own visits are listed as "you" but don't add to
-            the count. Hover a time for the IP. Times are UTC.
+            the count. Hover a time for the IP. <span data-utc-note>Times are UTC.</span>
         </p>
 
         @if (Model.Views.Count == 0)
@@ -32,19 +32,24 @@
         }
         else
         {
-            @foreach (var day in Model.Views.GroupBy(v => v.At.Date))
-            {
-                <div class="mb-2">
-                    <span class="small fw-bold">@day.Key.ToString("ddd d MMM yyyy")</span>
-                    <span class="small text-secondary">· @day.Count() view@(day.Count() == 1 ? "" : "s")</span>
-                    <div class="small text-secondary mono">
-                        @foreach (var v in day.OrderBy(t => t.At))
-                        {
-                            <span class="me-2" title="@(v.Ip ?? "IP unknown")">@v.At.ToString("HH:mm")@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")@(v.IsOwner ? " (you)" : "")</span>
-                        }
+            @* Rendered in UTC day groups; view-log.js regroups into the viewer's local days on load. *@
+            <div data-view-log>
+                @foreach (var day in Model.Views.GroupBy(v => v.At.Date))
+                {
+                    <div class="mb-2">
+                        <span class="small fw-bold">@day.Key.ToString("ddd d MMM yyyy")</span>
+                        <span class="small text-secondary">· @day.Count() view@(day.Count() == 1 ? "" : "s")</span>
+                        <div class="small text-secondary mono">
+                            @foreach (var v in day.OrderBy(t => t.At))
+                            {
+                                <span class="me-2" title="@(v.Ip ?? "IP unknown")"><time
+                                        datetime="@DateTime.SpecifyKind(v.At, DateTimeKind.Utc).ToString("o")"
+                                        data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")@(v.IsOwner ? " (you)" : "")</span>
+                            }
+                        </div>
                     </div>
-                </div>
-            }
+                }
+            </div>
             @if (Model.Views.Count == ViewLogViewModel.Cap)
             {
                 <p class="text-secondary small mb-0 mt-3">Showing the latest @ViewLogViewModel.Cap views.</p>
@@ -59,3 +64,5 @@
         }
     </div>
 </div>
+
+<script src="/js/view-log.js" asp-append-version="true"></script>
