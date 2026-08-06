@@ -137,6 +137,15 @@ public class IngestionService(
             item.CapturedAt = null;
             item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
             item.PosterFileName = null;
+            item.HlsCodecs = item.HlsHqCodecs = item.HlsWebStem = null;
+            item.WebSizeBytes = item.HqSizeBytes = null;
+            item.WebWidth = item.WebHeight = null;
+            item.WebEncoder = null;
+            item.EncodeCrf = null;
+            item.EncodePreset = null;
+            item.EncodeToneMapped = false;
+            item.EncodeMs = null;
+            item.SourceIsHdr = false;
             item.Status = MediaStatus.Uploaded;
             item.ErrorMessage = null;
 
@@ -145,8 +154,19 @@ public class IngestionService(
 
         // Drop what the item used to point at, now that it points somewhere else. The item itself is
         // excluded from the "still referenced?" check by id: the row survives a replace, but its claim on
-        // these files did not.
-        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
+        // these files did not. Unless the "new" bytes deduped onto the hash this item already had: then
+        // everything old is also everything new, and deleting would take out the file just stored.
+        if (oldHash != stored.Hash)
+        {
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
+        }
+        else if (oldExt != extension
+                 && !await db.MediaItems.AnyAsync(m => m.Id != item.Id && m.ContentHash == oldHash && m.Extension == oldExt, ct))
+        {
+            // Same bytes under a new extension: only the old container name goes. The hash-named
+            // renditions still describe this exact content, and the worker re-adopts them.
+            await storage.DeleteAsync(oldHash + oldExt, ct);
+        }
 
         queue.Enqueue(item.Id);
         logger.LogInformation("Replaced item {Slug} with {File} (deduped-storage={Dedup})",
