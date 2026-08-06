@@ -93,8 +93,11 @@
             return;
         }
 
-        // The chart div itself is hidden until first render, so measure the visible parent.
-        var w = Math.max(chart.parentElement.clientWidth || 0, 280);
+        // The chart div itself is hidden until first render, so measure the visible parent - its
+        // content box, not clientWidth, which would include the card body's padding and bleed.
+        var parent = chart.parentElement;
+        var pad = getComputedStyle(parent);
+        var w = Math.max(parent.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight), 280);
         var plotH = 84;
         var h = plotH + 18; // room for the date labels under the baseline
         var gap = 2;
