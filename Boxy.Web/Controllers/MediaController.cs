@@ -365,8 +365,10 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         Response.Headers["X-Robots-Tag"] = "noindex";
         // The URL carries a ?v= content token, so a given URL always maps to the same bytes: cache it
         // hard. A bare hit (no token) revalidates instead, so a replaced thumbnail is still picked up.
+        // Private, like /f: this endpoint is gated, and a shared cache must not keep answering the URL
+        // after a password or expiry closes that gate.
         Response.Headers.CacheControl = Request.Query.ContainsKey("v")
-            ? "public, max-age=31536000, immutable"
+            ? "private, max-age=31536000, immutable"
             : "no-cache";
         return BlobServing.Serve(serve, "image/jpeg", null, false);
     }
