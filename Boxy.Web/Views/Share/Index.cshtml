@@ -224,6 +224,14 @@
         function recover() {
             if (attempts >= 3) return;
             attempts++;
+            // Gentlest unwedge first: a hair's-width seek makes the pipeline re-evaluate its buffers
+            // without throwing them away (what hls.js does for a stalled buffer). The full reload is the
+            // sledgehammer for whatever survives it - and any real progress resets the escalation.
+            if (attempts === 1 && media.currentTime > 0) {
+                media.currentTime = media.currentTime + 0.1;
+                return;
+            }
+
             reload();
         }
 
@@ -268,26 +276,37 @@
             recover();
         });
 
-        // The silent failure mode: no error event, the pipeline just stops making progress. If the
-        // clock hasn't moved for 15s while it should be playing and buffering, kick the same recovery.
+        // The silent failure mode: no error event, the pipeline just stops making progress. It matters
+        // most on Safari, which often fires NO error for a dead HLS segment or a killed range request -
+        // playback just stops. But "no progress" alone is not death: on a slow connection the clock
+        // legitimately stands still while the buffer fills. So the watchdog only counts a stretch as
+        // stuck when the BUFFER has stopped moving too; download activity of any kind resets it. A seek
+        // still gets extra rope on top: reloading mid-seek restarts the whole wait on the same slow link.
+        var lastBufEnd = -1;
         setInterval(function () {
+            var bufEnd = 0;
+            try {
+                for (var i = 0; i < media.buffered.length; i++) bufEnd = Math.max(bufEnd, media.buffered.end(i));
+            } catch (e) {
+            }
+
             if (media.paused || media.ended) {
                 stuckMs = 0;
             } else if (media.currentTime !== lastTime) {
                 stuckMs = 0;
                 attempts = 0; // real progress again: future hiccups may recover anew
-            } else if (media.readyState < 3) { // below HAVE_FUTURE_DATA: starved, not just idle
+            } else if (media.readyState < 3 && bufEnd === lastBufEnd) { // starved AND nothing arriving
                 stuckMs += 3000;
-                // A seek that is still buffering on a slow link is not a dead pipeline, and reloading
-                // it refetches the moov and starts the wait over on that same slow link - the player
-                // visibly jumping around under the viewer's thumb. Give a pending seek three times the
-                // rope; a connection that actually died still trips it.
                 if (stuckMs >= (media.seeking ? 45000 : 15000)) {
                     stuckMs = 0;
                     recover();
                 }
+            } else {
+                stuckMs = 0; // idle-but-downloading, or briefly below HAVE_FUTURE_DATA: not dead
             }
+
             lastTime = media.currentTime;
+            lastBufEnd = bufEnd;
         }, 3000);
     })();
 
