@@ -1295,6 +1295,10 @@ public class DashboardController(
             {
                 item.HqFileName = null;
                 item.HqCodecs = null;
+                item.HqSizeBytes = null;
+                // The master playlist offers the H.265 variant off HlsHqCodecs alone; a profile with no
+                // H.265 lane must stop advertising it, and clearing this lets the sweep reclaim the pair.
+                item.HlsHqCodecs = null;
             }
 
             await db.SaveChangesAsync(ct);
