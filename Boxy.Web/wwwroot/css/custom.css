@@ -1460,3 +1460,53 @@ a.up-chip:hover {
     /* Inset hairline so a pale dot still reads against the kraft background. */
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
 }
+
+/* ── Share view log: the per-day chart and the time chips ────────────────── */
+.view-log-chart {
+    position: relative;
+}
+
+.view-log-chart .vlog-bar {
+    fill: var(--brand-deep); /* validated against the card surface; plain --brand is too pale here */
+}
+
+.view-log-chart .vlog-bar.is-hover {
+    fill: var(--brand);
+}
+
+.view-log-chart .vlog-axis {
+    stroke: var(--kraft-line);
+}
+
+.view-log-chart .vlog-grid {
+    stroke: var(--kraft-line);
+    stroke-dasharray: 2 3;
+}
+
+.view-log-chart .vlog-label {
+    fill: var(--ink-faint);
+    font-size: .7rem;
+}
+
+.view-log-chart .vlog-tip {
+    position: absolute;
+    top: -.4rem;
+    background: var(--kraft-card);
+    border: 1px solid var(--kraft-line);
+    border-radius: .4rem;
+    padding: .1rem .45rem;
+    font-size: .75rem;
+    color: var(--ink-soft);
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(42, 32, 24, .12);
+}
+
+.view-chip {
+    display: inline-block;
+    background: var(--kraft-sub);
+    border-radius: .35rem;
+    padding: 0 .4rem;
+    margin: 0 .25rem .25rem 0;
+    white-space: nowrap;
+}

@@ -31,6 +31,9 @@
         }
         else
         {
+            @* Filled by view-log.js from the same entries as the list; stays hidden without script. *@
+            <div class="view-log-chart mb-4" data-view-chart hidden></div>
+
             @* Rendered in UTC day groups; view-log.js regroups into the viewer's local days on load. *@
             <div data-view-log>
                 @foreach (var day in Model.Views.GroupBy(v => v.At.Date))
@@ -42,7 +45,7 @@
                             @foreach (var v in day.OrderBy(t => t.At))
                             {
                                 @* Whole seconds only: Safari's Date() rejects the 7-digit fraction of "o". *@
-                                <span class="me-2" title="@(v.Ip ?? "IP unknown")"><time
+                                <span class="view-chip" title="@(v.Ip ?? "IP unknown")"><time
                                         datetime="@v.At.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")"
                                         data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")</span>
                             }
