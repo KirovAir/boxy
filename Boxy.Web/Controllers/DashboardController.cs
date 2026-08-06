@@ -797,7 +797,7 @@ public class DashboardController(
             .Where(v => v.MediaItemId == id)
             .OrderByDescending(v => v.CreatedDate)
             .Take(ViewLogViewModel.Cap)
-            .Select(v => new ViewLogRow(v.CreatedDate, v.Ip, v.Country, v.IsOwner))
+            .Select(v => new ViewLogRow(v.CreatedDate, v.Ip, v.Country))
             .ToListAsync();
         return View(new ViewLogViewModel { Item = item, Views = views });
     }

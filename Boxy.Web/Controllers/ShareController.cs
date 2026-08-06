@@ -82,11 +82,10 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.Views, m => m.Views + 1));
         }
 
-        // The log keeps more than the counter: owner views land in it too, marked as such, so testing
-        // your own link shows up without inflating the public count. The country fills in afterwards.
-        if (item.Published && !isBot && !isPrefetch)
+        // The log mirrors the counter exactly: real visitors only. The country fills in afterwards.
+        if (incremented)
         {
-            var view = new MediaView { MediaItemId = item.Id, IsOwner = isOwner, Ip = Services.GeoLookup.ClientIp(Request) };
+            var view = new MediaView { MediaItemId = item.Id, Ip = Services.GeoLookup.ClientIp(Request) };
             db.MediaViews.Add(view);
             await db.SaveChangesAsync();
             geo.Tag(view.Id, view.Ip);

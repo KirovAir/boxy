@@ -9,9 +9,8 @@
         BackHref = $"/dashboard/media/{Model.Item.Id}",
         BackLabel = "Back to the share"
     };
-    // The counter existed before the log did, so an older share has views with no entry here. Owner
-    // views are in the log but never in the counter, so they don't take part in this math.
-    var unlogged = Math.Max(0, Model.Item.Views - Model.Views.Count(v => !v.IsOwner));
+    // The counter existed before the log did, so an older share has views with no entry here.
+    var unlogged = Math.Max(0, Model.Item.Views - Model.Views.Count);
 }
 <partial name="_PageHeader" model="header"/>
 
@@ -20,8 +19,8 @@
         <h2 class="h6 mb-1">@Model.Item.Title</h2>
         <p class="text-secondary small mb-3">
             @Model.Item.Views view@(Model.Item.Views == 1 ? "" : "s") total. Every visit to the share page counts,
-            repeat visitors included; link-preview bots don't. Your own visits are listed as "you" but don't add to
-            the count. Hover a time for the IP. <span data-utc-note>Times are UTC.</span>
+            repeat visitors included; your own visits and link-preview bots don't. Hover a time for the IP.
+            <span data-utc-note>Times are UTC.</span>
         </p>
 
         @if (Model.Views.Count == 0)
@@ -45,7 +44,7 @@
                                 @* Whole seconds only: Safari's Date() rejects the 7-digit fraction of "o". *@
                                 <span class="me-2" title="@(v.Ip ?? "IP unknown")"><time
                                         datetime="@v.At.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")"
-                                        data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")@(v.IsOwner ? " (you)" : "")</span>
+                                        data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")</span>
                             }
                         </div>
                     </div>

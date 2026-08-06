@@ -13,5 +13,5 @@ public class ViewLogViewModel
     public const int Cap = 1000;
 }
 
-/// <summary>One logged view: the moment, where from, and whether it was the owner's own visit.</summary>
-public record ViewLogRow(DateTime At, string? Ip, string? Country, bool IsOwner);
+/// <summary>One logged view: the moment and where it came from.</summary>
+public record ViewLogRow(DateTime At, string? Ip, string? Country);
