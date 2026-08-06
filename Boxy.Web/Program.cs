@@ -123,6 +123,9 @@ await builder.RunWithLoggingAsync(async b =>
     // to an address the SSRF check already validated away from.
     b.Services.AddHttpClient("webhook", c => c.Timeout = TimeSpan.FromSeconds(10))
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+    // Country tag for the view log: short timeout, resolved off the request thread.
+    b.Services.AddHttpClient("geo", c => c.Timeout = TimeSpan.FromSeconds(5));
+    b.Services.AddSingleton<GeoLookup>();
     b.Services.AddSingleton<QuotaService>();
     b.Services.AddScoped<IngestionService>();
     b.Services.AddScoped<ChunkedUploadService>();

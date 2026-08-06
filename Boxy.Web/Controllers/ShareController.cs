@@ -9,7 +9,7 @@ namespace Boxy.Web.Controllers;
 /// <summary>Public share page with server-rendered OpenGraph metadata. An admin's shares live at
 /// <c>/s/{slug}</c>; a regular user's under their username at <c>/s/{username}/{slug}</c>. The stable
 /// token always resolves at the root too, so links never break after a rename.</summary>
-public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfiguration config, Services.ShareUnlock unlock) : Controller
+public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfiguration config, Services.ShareUnlock unlock, Services.GeoLookup geo) : Controller
 {
     [HttpGet("/s/{slug}")]
     public Task<IActionResult> Index(string slug)
@@ -80,9 +80,16 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
         {
             await db.MediaItems.Where(m => m.Id == item.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.Views, m => m.Views + 1));
-            // The same view, as a timeline entry: the counter says how many, the log says when.
-            db.MediaViews.Add(new MediaView { MediaItemId = item.Id });
+        }
+
+        // The log keeps more than the counter: owner views land in it too, marked as such, so testing
+        // your own link shows up without inflating the public count. The country fills in afterwards.
+        if (item.Published && !isBot && !isPrefetch)
+        {
+            var view = new MediaView { MediaItemId = item.Id, IsOwner = isOwner, Ip = Services.GeoLookup.ClientIp(Request) };
+            db.MediaViews.Add(view);
             await db.SaveChangesAsync();
+            geo.Tag(view.Id, view.Ip);
         }
 
         var likeToken = Services.UploaderCookie.Current(HttpContext);

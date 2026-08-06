@@ -41,4 +41,21 @@ public static class Format
             ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}"
             : $"{t.Minutes}:{t.Seconds:00}";
     }
+
+    /// <summary>Country code to its flag emoji ("NL" → 🇳🇱); "" when unknown.</summary>
+    public static string Flag(string? country)
+    {
+        if (country is not { Length: 2 })
+        {
+            return "";
+        }
+
+        var c = country.ToUpperInvariant();
+        if (c[0] is < 'A' or > 'Z' || c[1] is < 'A' or > 'Z')
+        {
+            return "";
+        }
+
+        return char.ConvertFromUtf32(0x1F1E6 + c[0] - 'A') + char.ConvertFromUtf32(0x1F1E6 + c[1] - 'A');
+    }
 }

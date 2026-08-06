@@ -1,13 +1,22 @@
 namespace Boxy.Data.Entities;
 
-/// <summary>One counted view of a share, logged at the moment the view counter ticks. Deliberately
-/// just a timestamp: no IP, no user agent, so the log is a timeline rather than a visitor tracker.</summary>
+/// <summary>One view of a share's page: the moment, the viewer's IP with a best-effort country tag,
+/// and whether it was the owner looking at their own share (listed in the log, never counted).</summary>
 public class MediaView : AuditableEntity
 {
     public int Id { get; set; }
 
     public int MediaItemId { get; set; }
     public MediaItem? MediaItem { get; set; }
+
+    /// <summary>Viewer's IP as the proxy reported it, shown on hover in the owner's log.</summary>
+    public string? Ip { get; set; }
+
+    /// <summary>ISO country code resolved from the IP in the background; null when private or unknown.</summary>
+    public string? Country { get; set; }
+
+    /// <summary>The share's owner viewing their own page; excluded from the public view count.</summary>
+    public bool IsOwner { get; set; }
 }
 
 public class MediaViewConfiguration : AuditEntityConfiguration<MediaView>

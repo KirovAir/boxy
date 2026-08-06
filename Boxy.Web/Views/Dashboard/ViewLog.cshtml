@@ -9,8 +9,9 @@
         BackHref = $"/dashboard/media/{Model.Item.Id}",
         BackLabel = "Back to the share"
     };
-    // The counter existed before the log did, so an older share has views with no entry here.
-    var unlogged = Math.Max(0, Model.Item.Views - Model.Views.Count);
+    // The counter existed before the log did, so an older share has views with no entry here. Owner
+    // views are in the log but never in the counter, so they don't take part in this math.
+    var unlogged = Math.Max(0, Model.Item.Views - Model.Views.Count(v => !v.IsOwner));
 }
 <partial name="_PageHeader" model="header"/>
 
@@ -19,7 +20,8 @@
         <h2 class="h6 mb-1">@Model.Item.Title</h2>
         <p class="text-secondary small mb-3">
             @Model.Item.Views view@(Model.Item.Views == 1 ? "" : "s") total. Every visit to the share page counts,
-            repeat visitors included; your own previews and link-preview bots don't. Times are UTC.
+            repeat visitors included; link-preview bots don't. Your own visits are listed as "you" but don't add to
+            the count. Hover a time for the IP. Times are UTC.
         </p>
 
         @if (Model.Views.Count == 0)
@@ -30,13 +32,16 @@
         }
         else
         {
-            @foreach (var day in Model.Views.GroupBy(v => v.Date))
+            @foreach (var day in Model.Views.GroupBy(v => v.At.Date))
             {
                 <div class="mb-2">
                     <span class="small fw-bold">@day.Key.ToString("ddd d MMM yyyy")</span>
                     <span class="small text-secondary">· @day.Count() view@(day.Count() == 1 ? "" : "s")</span>
                     <div class="small text-secondary mono">
-                        @string.Join(" · ", day.OrderBy(t => t).Select(t => t.ToString("HH:mm")))
+                        @foreach (var v in day.OrderBy(t => t.At))
+                        {
+                            <span class="me-2" title="@(v.Ip ?? "IP unknown")">@v.At.ToString("HH:mm")@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")@(v.IsOwner ? " (you)" : "")</span>
+                        }
                     </div>
                 </div>
             }

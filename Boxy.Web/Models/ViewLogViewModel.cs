@@ -2,13 +2,16 @@ using Boxy.Data.Entities;
 
 namespace Boxy.Web.Models;
 
-/// <summary>A share's view timeline: when each counted view happened, newest first.</summary>
+/// <summary>A share's view timeline: when each logged view happened, newest first.</summary>
 public class ViewLogViewModel
 {
     public required MediaItem Item { get; init; }
 
-    /// <summary>View moments (UTC), newest first, capped at the latest <see cref="Cap"/>.</summary>
-    public required IReadOnlyList<DateTime> Views { get; init; }
+    /// <summary>Logged views (UTC), newest first, capped at the latest <see cref="Cap"/>.</summary>
+    public required IReadOnlyList<ViewLogRow> Views { get; init; }
 
     public const int Cap = 1000;
 }
+
+/// <summary>One logged view: the moment, where from, and whether it was the owner's own visit.</summary>
+public record ViewLogRow(DateTime At, string? Ip, string? Country, bool IsOwner);
