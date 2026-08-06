@@ -48,6 +48,7 @@ public class MediaProcessingWorker(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Unhandled error processing media {Id}", id);
+                await MarkFailedAfterCrashAsync(id);
             }
             finally
             {
@@ -192,7 +193,7 @@ public class MediaProcessingWorker(
             }
 
             item.Status = MediaStatus.Ready;
-            await db.SaveChangesAsync(ct);
+            await TrySaveAsync(db, item, ct);
             return;
         }
 
@@ -377,6 +378,19 @@ public class MediaProcessingWorker(
             await ProduceHqAsync(item, probe, originalPath, expectedDuration, previous.HqFileName, ct);
         }
 
+        // A sidecar that was in force but didn't re-validate this run stays on disk: it can be owner-
+        // made, the server never re-encodes H.265, and the failure is as likely a probe hiccup as a bad
+        // file. Keep it out of the sweep and say so; the next run adopts it, or warns again. A profile
+        // that no longer wants the lane still reclaims it - that switch is deliberate.
+        var sidecar = item.ContentHash + ConversionProfiles.HqSuffix;
+        var sweepHq = previous.HqFileName;
+        if (ConversionProfiles.WantsHq(item.Profile) && sweepHq == sidecar && item.HqFileName is null
+            && await storage.ExistsAsync(sidecar, ct))
+        {
+            logger.LogWarning("Keeping unadopted H.265 sidecar for {Slug}; it failed validation this run", item.Slug);
+            sweepHq = null;
+        }
+
         // Repackage what the two lanes serve as HLS, which is what makes playback and scrubbing behave on
         // Safari over slow connections (its progressive pipeline wedges; its HLS pipeline doesn't). A
         // lossless stream-copy, so it is IO-bound and cheap, and always done fresh: the inputs may be new
@@ -399,7 +413,7 @@ public class MediaProcessingWorker(
         item.EncodeToneMapped = toneMapped;
         item.EncodeMs = (int)sw.Elapsed.TotalMilliseconds;
 
-        await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
+        await FinishAsync(db, item, previous.WebFileName, sweepHq, ct);
 
         var how = lane switch
         {
@@ -435,7 +449,10 @@ public class MediaProcessingWorker(
     private async Task FinishAsync(AppDbContext db, MediaItem item, string? previousWeb, string? previousHq, CancellationToken ct)
     {
         item.Status = MediaStatus.Ready;
-        await db.SaveChangesAsync(ct);
+        if (!await TrySaveAsync(db, item, ct))
+        {
+            return;
+        }
 
         foreach (var stale in new[] { previousWeb, previousHq })
         {
@@ -700,9 +717,16 @@ public class MediaProcessingWorker(
         }
 
         using var existing = await storage.GetLocalCopyAsync(hqName, ct);
-        if (existing is null
-            || await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct) is not { } reused
-            || MediaProcessor.HevcCodecs(reused) is not { } codecs)
+        if (existing is null)
+        {
+            return false;
+        }
+
+        // Validation gets one retry: ffprobe can hiccup (a timeout, a transient nonzero exit), and a
+        // false negative here is expensive - the file can be owner-made, and is never rebuilt.
+        var reused = await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct)
+                     ?? await processor.ValidateWebOutputAsync(existing.Path, duration, MediaProcessor.HqCodecSet, ct);
+        if (reused is null || MediaProcessor.HevcCodecs(reused) is not { } codecs)
         {
             return false;
         }
@@ -829,15 +853,58 @@ public class MediaProcessingWorker(
             // the one-time heal doesn't re-attempt this doomed item on every startup.
             item.Status = MediaStatus.Ready;
             item.ErrorMessage = "Legacy heal skipped: " + message;
-            await db.SaveChangesAsync(ct);
-            logger.LogWarning("Heal reprocess of {Slug} failed ({Message}); left published", item.Slug, message);
+            if (await TrySaveAsync(db, item, ct))
+            {
+                logger.LogWarning("Heal reprocess of {Slug} failed ({Message}); left published", item.Slug, message);
+            }
+
             return;
         }
 
         item.Status = MediaStatus.Failed;
         item.ErrorMessage = message;
-        await db.SaveChangesAsync(ct);
-        logger.LogWarning("Media {Slug} failed: {Message}", item.Slug, message);
+        if (await TrySaveAsync(db, item, ct))
+        {
+            logger.LogWarning("Media {Slug} failed: {Message}", item.Slug, message);
+        }
+    }
+
+    /// <summary>After an unhandled crash mid-run: a fresh upload left Processing would 404 for its owner
+    /// until the next restart requeues it. Mark it Failed so the state is visible, the owner can retry
+    /// with Convert again, and the boot scan retries it too. A Ready item (a heal) stays as it was.</summary>
+    private async Task MarkFailedAfterCrashAsync(int id)
+    {
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            await db.MediaItems
+                .Where(m => m.Id == id && (m.Status == MediaStatus.Uploaded || m.Status == MediaStatus.Processing))
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, MediaStatus.Failed)
+                    .SetProperty(m => m.ErrorMessage, "Processing failed unexpectedly. Retry with Convert again."));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Could not mark crashed media {Id} as failed", id);
+        }
+    }
+
+    /// <summary>Save the run's outcome. When the row vanished mid-run (the owner deleted the item), the
+    /// blobs this run stored are referenced by nothing and findable by nothing - reclaim them through
+    /// the same dedup-safe path the delete used, driven by the in-memory claims.</summary>
+    private async Task<bool> TrySaveAsync(AppDbContext db, MediaItem item, CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            logger.LogWarning("Media {Slug} was deleted while processing; dropping this run's files", item.Slug);
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, item.ContentHash, item.Extension,
+                item.PosterFileName, item.WebFileName, item.HqFileName, ct);
+            return false;
+        }
     }
 
     /// <summary>The stored byte size of a rendition, read straight from the backend (a local file stat, or a
