@@ -421,7 +421,7 @@ public class MediaProcessor(
         {
             var rate = v.MaxrateKbps > 0 ? $"-maxrate {v.MaxrateKbps}k -bufsize {v.MaxrateKbps * 2}k " : "";
             return
-                $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? "
+                $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:V:0 -map 0:a:0? "
                 + $"-vf \"{string.Join(',', filters)}\" "
                 + $"-c:v libx264 -preset {v.Preset} -crf {v.Crf} {rate}-profile:v high -pix_fmt yuv420p "
                 + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
@@ -438,7 +438,7 @@ public class MediaProcessor(
         // rather than pretending the two are comparable. No -maxrate: it is ignored under CQP.
         return
             $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -vaapi_device {caps.VaapiDevice} "
-            + $"-i \"{input}\" -map 0:v:0 -map 0:a:0? "
+            + $"-i \"{input}\" -map 0:V:0 -map 0:a:0? "
             + $"-vf \"{string.Join(',', filters)}\" "
             + $"-c:v h264_vaapi -rc_mode CQP -qp {v.Crf} -profile:v high "
             + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
@@ -453,7 +453,7 @@ public class MediaProcessor(
         // HEVC in mp4 must carry the hvc1 tag or Safari/QuickTime refuse it (some encoders write hev1).
         var tag = videoCodec == "hevc" ? "-tag:v hvc1 " : "";
         var (code, _, err) = await RunAsync(FfmpegPath,
-            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -c copy {tag}-movflags +faststart -f mp4 \"{tmp}\"",
+            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:V:0 -map 0:a:0? -c copy {tag}-movflags +faststart -f mp4 \"{tmp}\"",
             TranscodeTimeout, ct, onProgress);
         if (code != 0)
         {
@@ -481,7 +481,7 @@ public class MediaProcessor(
         // than its mp4 stack is.
         var tag = videoCodec == "hevc" ? "-tag:v hvc1 " : "";
         var (code, _, err) = await RunAsync(FfmpegPath,
-            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:v:0 -map 0:a:0? -c copy {tag}"
+            $"-nostdin -hide_banner -nostats -loglevel error -y -i \"{input}\" -map 0:V:0 -map 0:a:0? -c copy {tag}"
             + $"-f hls -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 -hls_flags single_file "
             + $"-hls_segment_filename {variant}.m4s {variant}.m3u8",
             TranscodeTimeout, ct, workingDir: workDir);

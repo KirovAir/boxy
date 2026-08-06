@@ -67,9 +67,14 @@ public sealed class RemoteBlobResult(RemoteBlobServe blob, string contentType, s
         var length = blob.Length;
         var partial = false;
 
-        if (enableRange && request.Headers.ContainsKey(HeaderNames.Range) && RangeApplies(request))
+        // Multi-range and non-bytes units are ignored outright (RFC 9110 allows it): a plain 200 with
+        // the full body, not a 206 dressed up as one. Browsers only send single byte ranges for media.
+        var rangeHeader = request.Headers.Range.ToString();
+        var singleByteRange = rangeHeader.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase)
+                              && !rangeHeader.Contains(',');
+        if (enableRange && singleByteRange && RangeApplies(request))
         {
-            var parsed = ParseSingleRange(request.Headers.Range.ToString(), blob.Length);
+            var parsed = ParseSingleRange(rangeHeader, blob.Length);
             if (parsed is null)
             {
                 response.StatusCode = StatusCodes.Status416RangeNotSatisfiable;
@@ -140,8 +145,8 @@ public sealed class RemoteBlobResult(RemoteBlobServe blob, string contentType, s
     }
 
     // Parse a single byte range ("bytes=start-end", "bytes=start-", "bytes=-suffix"). Returns the
-    // resolved (start, length), or null when unsatisfiable. Multi-range requests fall back to the full
-    // body since browsers only send single ranges for media.
+    // resolved (start, length), or null when unsatisfiable. The caller has already filtered out
+    // multi-range and non-bytes units (those get a plain 200).
     private static (long Start, long Length)? ParseSingleRange(string header, long total)
     {
         const string prefix = "bytes=";
@@ -151,11 +156,6 @@ public sealed class RemoteBlobResult(RemoteBlobServe blob, string contentType, s
         }
 
         var spec = header[prefix.Length..].Trim();
-        if (spec.Contains(','))
-        {
-            return (0, total); // multi-range not supported; serve full
-        }
-
         var dash = spec.IndexOf('-');
         if (dash < 0)
         {

@@ -98,6 +98,9 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
 
         if (download != 0)
         {
+            // Counted downloads must each reach the origin: heuristic caching would let a repeat
+            // download skip the counter, and keep original bytes past a later password or expiry.
+            Response.Headers.CacheControl = "no-store";
             // Content-Disposition attachment with the uploader's original filename.
             var name = string.IsNullOrWhiteSpace(item.OriginalFileName) ? item.Slug + item.Extension : item.OriginalFileName;
             return BlobServing.Serve(serve, "application/octet-stream", name, true);

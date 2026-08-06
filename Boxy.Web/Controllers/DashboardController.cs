@@ -846,6 +846,7 @@ public class DashboardController(
             }
         }
 
+        string? stalePoster = null;
         if (thumbnail is { Length: > 0 })
         {
             // For a video, size the poster to the video's resolution so it lines up with the frame;
@@ -859,17 +860,19 @@ public class DashboardController(
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
-            var oldPoster = item.PosterFileName;
+            stalePoster = item.PosterFileName != newPoster ? item.PosterFileName : null;
             item.PosterFileName = newPoster;
-            // Drop the previous poster once nothing else references it (dedup-safe).
-            if (oldPoster is not null && oldPoster != newPoster
-                                      && !await db.MediaItems.AnyAsync(m => m.PosterFileName == oldPoster && m.Id != id, ct))
-            {
-                await storage.DeleteAsync(oldPoster, ct);
-            }
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Drop the previous poster once nothing else references it (dedup-safe). After the save, the
+        // worker's own order: the row must never point at a blob this method already deleted.
+        if (stalePoster is not null
+            && !await db.MediaItems.AnyAsync(m => m.PosterFileName == stalePoster && m.Id != id, ct))
+        {
+            await storage.DeleteAsync(stalePoster, ct);
+        }
 
         // Stay on the edit page so the change is visible and confirmed.
         this.FlashSuccess("Changes saved.");
@@ -1319,6 +1322,15 @@ public class DashboardController(
                 item.HlsHqCodecs = null;
             }
 
+            // Last gate, at the save itself: the repackage and store above can take minutes, and a
+            // conversion enqueued in that window would fight these columns. The blobs already hold the
+            // new bytes; bailing keeps the columns consistent and the queued run settles from there.
+            if (queue.IsPending(item.Id))
+            {
+                this.FlashWarning("A conversion was queued while this uploaded and will settle shortly. Check the result and upload again if needed.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
             await db.SaveChangesAsync(ct);
 
             // Drop what this replaced when it lived under another name (a legacy suffix, or an earlier
@@ -1455,6 +1467,13 @@ public class DashboardController(
             item.HqFileName = hqName;
             item.HqCodecs = codecs;
             item.HqSizeBytes = hqSize;
+            // Same last gate as the web version: don't let these columns race a just-queued conversion.
+            if (queue.IsPending(item.Id))
+            {
+                this.FlashWarning("A conversion was queued while this uploaded and will settle shortly. Check the result and upload again if needed.");
+                return RedirectToAction(nameof(Edit), new { id });
+            }
+
             await db.SaveChangesAsync(ct);
 
             // The old HQ file can be the ORIGINAL blob (an upload that already was a faststart hvc1 mp4);
