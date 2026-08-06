@@ -1198,6 +1198,14 @@ public class DashboardController(
             return RedirectToAction(nameof(Edit), new { id });
         }
 
+        // Identical bytes are stored once, renditions included: a hand-in would swap what every item
+        // on this hash serves, not just this one. Refuse rather than silently rewrite another share.
+        if (await db.MediaItems.AnyAsync(m => m.Id != id && m.ContentHash == item.ContentHash, ct))
+        {
+            this.FlashError("Another item holds this exact file (identical bytes), and a handed-in version would change what it plays too. Remove the duplicate first.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
         var maxBytes = await MaxUploadBytesAsync(ct);
         if (maxBytes > 0 && file.Length > maxBytes)
         {
@@ -1225,11 +1233,12 @@ public class DashboardController(
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
-            // The remux took a while for a big file; if a conversion was queued or started in the meantime,
-            // back off rather than fight the worker over the same blob and columns.
-            if (queue.IsPending(item.Id))
+            // The remux took a while for a big file; if a conversion was queued or started in the
+            // meantime, or a dedup twin appeared, back off rather than overwrite what they rely on.
+            if (queue.IsPending(item.Id)
+                || await db.MediaItems.AnyAsync(m => m.Id != id && m.ContentHash == item.ContentHash, ct))
             {
-                this.FlashWarning("A conversion started while this uploaded - wait for it to finish, then try again.");
+                this.FlashWarning("This video changed while the file uploaded (a conversion, or a duplicate appeared). Try again in a moment.");
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
@@ -1241,6 +1250,15 @@ public class DashboardController(
             // probe, validate and stream-copy work: it adopts the file stored here, never re-encodes.
             if (!ConversionProfiles.Transcodes(item.Profile))
             {
+                // The backfill below runs under the global conversion ceiling; with Remux/Off it would
+                // collapse the profile straight back to as-uploaded and never adopt this file. Refuse up
+                // front instead of storing a rendition nothing will ever reference.
+                if ((await videoSettings.GetEffectiveAsync(ct)).ConversionMode != ConversionMode.Full)
+                {
+                    this.FlashError("The server-wide conversion mode doesn't build web versions right now, so a handed-in one would never be used. Switch video settings to full conversion first.");
+                    return RedirectToAction(nameof(Edit), new { id });
+                }
+
                 var bestName = item.ContentHash + ConversionProfiles.WebSuffix(ConversionProfile.Best);
                 await storage.PutAsync(bestName, tmpOut, ct);
                 item.Profile = ConversionProfile.Best;
@@ -1372,6 +1390,14 @@ public class DashboardController(
             return RedirectToAction(nameof(Edit), new { id });
         }
 
+        // Same twin rule as the web version: shared bytes mean shared renditions, so a hand-in here
+        // would swap what another item offers too.
+        if (await db.MediaItems.AnyAsync(m => m.Id != id && m.ContentHash == item.ContentHash, ct))
+        {
+            this.FlashError("Another item holds this exact file (identical bytes), and a handed-in version would change what it plays too. Remove the duplicate first.");
+            return RedirectToAction(nameof(Edit), new { id });
+        }
+
         var maxBytes = await MaxUploadBytesAsync(ct);
         if (maxBytes > 0 && file.Length > maxBytes)
         {
@@ -1408,9 +1434,10 @@ public class DashboardController(
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
-            if (queue.IsPending(item.Id))
+            if (queue.IsPending(item.Id)
+                || await db.MediaItems.AnyAsync(m => m.Id != id && m.ContentHash == item.ContentHash, ct))
             {
-                this.FlashWarning("A conversion started while this uploaded - wait for it to finish, then try again.");
+                this.FlashWarning("This video changed while the file uploaded (a conversion, or a duplicate appeared). Try again in a moment.");
                 return RedirectToAction(nameof(Edit), new { id });
             }
 
