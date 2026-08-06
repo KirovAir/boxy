@@ -31,7 +31,10 @@ public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFac
         var ip = request.Headers["X-Real-IP"].ToString();
         if (ip.Length == 0)
         {
-            ip = request.Headers["X-Forwarded-For"].ToString().Split(',')[0].Trim();
+            // The LAST hop is the one our own proxy appended; anything before it arrives exactly as
+            // the client sent it and costs nothing to fake (measured: a seeded value passed through).
+            var hops = request.Headers["X-Forwarded-For"].ToString().Split(',');
+            ip = hops[^1].Trim();
         }
 
         return IPAddress.TryParse(ip, out var parsed) ? parsed.ToString() : peer?.ToString();
