@@ -1,0 +1,56 @@
+@model ViewLogViewModel
+@{
+    ViewData["Title"] = "Views · " + Model.Item.Title;
+    var header = new PageHeader
+    {
+        Title = "Views",
+        Icon = PageIcon.Share,
+        Back = true,
+        BackHref = $"/dashboard/media/{Model.Item.Id}",
+        BackLabel = "Back to the share"
+    };
+    // The counter existed before the log did, so an older share has views with no entry here.
+    var unlogged = Math.Max(0, Model.Item.Views - Model.Views.Count);
+}
+<partial name="_PageHeader" model="header"/>
+
+<div class="card">
+    <div class="card-body">
+        <h2 class="h6 mb-1">@Model.Item.Title</h2>
+        <p class="text-secondary small mb-3">
+            @Model.Item.Views view@(Model.Item.Views == 1 ? "" : "s") total. Every visit to the share page counts,
+            repeat visitors included; your own previews and link-preview bots don't. Times are UTC.
+        </p>
+
+        @if (Model.Views.Count == 0)
+        {
+            <p class="text-secondary mb-0">
+                No views logged yet.@(unlogged > 0 ? " Earlier views happened before the log existed, so only their count remains." : " Share the link and they'll show up here.")
+            </p>
+        }
+        else
+        {
+            @foreach (var day in Model.Views.GroupBy(v => v.Date))
+            {
+                <div class="mb-2">
+                    <span class="small fw-bold">@day.Key.ToString("ddd d MMM yyyy")</span>
+                    <span class="small text-secondary">· @day.Count() view@(day.Count() == 1 ? "" : "s")</span>
+                    <div class="small text-secondary mono">
+                        @string.Join(" · ", day.OrderBy(t => t).Select(t => t.ToString("HH:mm")))
+                    </div>
+                </div>
+            }
+            @if (Model.Views.Count == ViewLogViewModel.Cap)
+            {
+                <p class="text-secondary small mb-0 mt-3">Showing the latest @ViewLogViewModel.Cap views.</p>
+            }
+            else if (unlogged > 0)
+            {
+                <p class="text-secondary small mb-0 mt-3">
+                    @unlogged earlier view@(unlogged == 1 ? "" : "s") predate@(unlogged == 1 ? "s" : "") the log and only
+                    count toward the total.
+                </p>
+            }
+        }
+    </div>
+</div>

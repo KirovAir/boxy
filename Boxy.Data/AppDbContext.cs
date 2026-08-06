@@ -10,6 +10,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Bucket> Buckets { get; set; } = null!;
     public DbSet<MediaItem> MediaItems { get; set; } = null!;
     public DbSet<MediaLike> MediaLikes { get; set; } = null!;
+    public DbSet<MediaView> MediaViews { get; set; } = null!;
 
     /// <summary>Key/value platform settings; see <c>Boxy.Data.Extensions.ConfigExtensions</c>.</summary>
     public DbSet<Config> Configs { get; set; } = null!;

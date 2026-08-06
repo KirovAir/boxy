@@ -780,6 +780,28 @@ public class DashboardController(
         return View(item);
     }
 
+    // The share's view timeline: one entry per counted view (same rules as the counter: no owner
+    // previews, no bots, no locked views). The counter predates the log, so an older share can show
+    // more total views than logged entries - the page says so rather than pretend.
+    [HttpGet("media/{id:int}/views")]
+    public async Task<IActionResult> ViewLog(int id)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await OwnedMedia(db).AsNoTracking().FirstOrDefaultAsync(m => m.Id == id);
+        if (item is null || item.BucketId is not null)
+        {
+            return NotFound();
+        }
+
+        var views = await db.MediaViews.AsNoTracking()
+            .Where(v => v.MediaItemId == id)
+            .OrderByDescending(v => v.CreatedDate)
+            .Take(ViewLogViewModel.Cap)
+            .Select(v => v.CreatedDate)
+            .ToListAsync();
+        return View(new ViewLogViewModel { Item = item, Views = views });
+    }
+
     [HttpPost("media/{id:int}")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Edit(int id, string title, string? description, string? slug, bool published, bool allowDownload, string? sharePassword, bool removePassword, int? maxDownloads,

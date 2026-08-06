@@ -10,6 +10,11 @@ public class PageHeader
     /// <summary>Show the "← Back to dashboard" link above the title (the detail pages).</summary>
     public bool Back { get; init; }
 
+    /// <summary>Where the back link points when it isn't the dashboard (a sub-page of a detail page).</summary>
+    public string? BackHref { get; init; }
+
+    public string? BackLabel { get; init; }
+
     /// <summary>Status badges rendered inline after the title, as (text, stamp modifier class) pairs.</summary>
     public IReadOnlyList<(string Text, string Css)> Stamps { get; init; } = [];
 

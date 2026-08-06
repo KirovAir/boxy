@@ -70,11 +70,19 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
         var isBot = ua.Length == 0 || System.Text.RegularExpressions.Regex.IsMatch(
             ua, "bot|crawl|spider|facebookexternalhit|whatsapp|telegram|slack|discord|embed|preview|curl|wget|python-requests",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var incremented = !isOwner && item.Published && !isBot;
+        // Browsers also fetch pages nobody is looking at yet (Safari's top-hit preload, Chrome's link
+        // prefetch); those announce themselves via Sec-Purpose/Purpose and aren't a view either.
+        var purpose = $"{Request.Headers["Sec-Purpose"]}{Request.Headers["Purpose"]}";
+        var isPrefetch = purpose.Contains("prefetch", StringComparison.OrdinalIgnoreCase)
+                         || purpose.Contains("preview", StringComparison.OrdinalIgnoreCase);
+        var incremented = !isOwner && item.Published && !isBot && !isPrefetch;
         if (incremented)
         {
             await db.MediaItems.Where(m => m.Id == item.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.Views, m => m.Views + 1));
+            // The same view, as a timeline entry: the counter says how many, the log says when.
+            db.MediaViews.Add(new MediaView { MediaItemId = item.Id });
+            await db.SaveChangesAsync();
         }
 
         var likeToken = Services.UploaderCookie.Current(HttpContext);

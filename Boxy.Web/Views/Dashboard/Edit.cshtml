@@ -69,7 +69,9 @@
                                     data-copy-label="Copied!">Copy link
                             </button>
                         </div>
-                        <div class="text-secondary small mt-2">@Model.Views view@(Model.Views == 1 ? "" : "s")</div>
+                        <div class="text-secondary small mt-2">
+                            <a href="/dashboard/media/@Model.Id/views">@Model.Views view@(Model.Views == 1 ? "" : "s")</a>
+                        </div>
                         @if (Model.ExpiresAt is not null)
                         {
                             <div class="d-flex align-items-center gap-2 mt-2">

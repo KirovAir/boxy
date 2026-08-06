@@ -3,7 +3,7 @@
    stamps. Used by the dashboard, a box, and the media editor so every screen opens the same way. *@
 @if (Model.Back)
 {
-    <a href="/dashboard" class="small">← Back to dashboard</a>
+    <a href="@(Model.BackHref ?? "/dashboard")" class="small">← @(Model.BackLabel ?? "Back to dashboard")</a>
 }
 <div class="d-flex align-items-center gap-2 my-3 flex-wrap">
     <span class="brand__mark" style="color:var(--brand)">
