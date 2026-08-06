@@ -45,14 +45,16 @@ public static class MediaBlobs
             await storage.DeleteAsync(contentHash + extension, ct);
         }
 
-        // A twin mid-pipeline holds its claims only in the worker's memory: the columns read below say
+        // A twin mid-RUN holds its claims only in the worker's memory: the columns read below say
         // "unreferenced" for the very names that run is about to advertise. Leave every derived file to
-        // that run's own sweep, which keeps what it adopts and reclaims the rest. Worth the rare leak on
-        // a profile mismatch - deleting a file mid-adoption is the loss that can't be repaired.
+        // that run's own sweep, which keeps what it adopts and reclaims the rest. Deliberately Active,
+        // not Pending: a merely queued twin's claims are its row (visible to these checks), and skipping
+        // for it would strand files forever if it were deleted before its run starts. Worth the rare
+        // leak on a profile mismatch - deleting a file mid-adoption is the loss that can't be repaired.
         var busyTwin = (await db.MediaItems
                 .Where(m => m.Id != itemId && m.ContentHash == contentHash)
                 .Select(m => m.Id).ToListAsync(ct))
-            .Any(queue.IsPending);
+            .Any(queue.IsActive);
         if (busyTwin)
         {
             return;

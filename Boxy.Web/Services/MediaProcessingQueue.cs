@@ -58,11 +58,29 @@ public class MediaProcessingQueue
         return pending.TryGetValue(mediaItemId, out var count) && count > 0;
     }
 
+    // The one item the worker is processing right now (0 = none); the worker is strictly serial, so a
+    // single slot is the whole truth. Kept apart from pending on purpose: a queued item's state lives
+    // fully in its row, while a running one holds claims only in worker memory until the finishing save.
+    private volatile int active;
+
+    /// <summary>Whether the worker is running this item at this instant. A queued-but-not-started item
+    /// is NOT active: ask this when only unsaved in-memory claims matter (see MediaBlobs), and
+    /// <see cref="IsPending"/> when any outstanding conversion does.</summary>
+    public bool IsActive(int mediaItemId)
+    {
+        return mediaItemId != 0 && active == mediaItemId;
+    }
+
     /// <summary>Called by the worker once it has finished an item, however it ended, to balance the enqueue
     /// so the item stops counting as pending. Drops the key at zero - and only at zero, atomically, so a
     /// re-enqueue that races the finish is not lost.</summary>
     public void Done(int mediaItemId)
     {
+        if (active == mediaItemId)
+        {
+            active = 0;
+        }
+
         var remaining = pending.AddOrUpdate(mediaItemId, 0, (_, count) => Math.Max(0, count - 1));
         if (remaining == 0)
         {
@@ -78,6 +96,7 @@ public class MediaProcessingQueue
             await waiting.WaitAsync(ct);
             if (uploads.TryDequeue(out var id) || backfill.TryDequeue(out id))
             {
+                active = id;
                 return id;
             }
         }

@@ -1203,6 +1203,8 @@ public class DashboardController(
 
         // Identical bytes are stored once, renditions included: a hand-in would swap what every item
         // on this hash serves, not just this one. Refuse rather than silently rewrite another share.
+        // Accepted: the refusal confirms identical bytes exist somewhere on the instance. The caller
+        // already holds the exact file, so the signal is thin; per-item rendition names would close it.
         if (await db.MediaItems.AnyAsync(m => m.Id != id && m.ContentHash == item.ContentHash, ct))
         {
             this.FlashError("Another item holds this exact file (identical bytes), and a handed-in version would change what it plays too. Remove the duplicate first.");
