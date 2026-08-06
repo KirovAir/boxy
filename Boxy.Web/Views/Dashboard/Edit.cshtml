@@ -347,6 +347,9 @@
                 {
                     <details class="mb-3">
                         <summary class="small text-secondary" style="cursor:pointer">Upload your own conversion</summary>
+                        <p class="small text-secondary mt-2 mb-0">This never changes the video itself, only the copies
+                            browsers play. Encoded this same video on a faster machine? Hand it in here and it's used
+                            as-is; nothing is re-encoded. A different video goes through Replace file below instead.</p>
                         <form method="post" action="/dashboard/media/@Model.Id/webversion" enctype="multipart/form-data"
                               class="mt-2">
                             @Html.AntiForgeryToken()
@@ -386,8 +389,10 @@
             {
                 <hr class="my-4"/>
                 <h3 class="h6 mb-1">Replace file</h3>
-                <p class="text-secondary small mb-3">Upload a newer version. The link, title, and stats stay - only the
-                    file changes, then reprocesses. Choosing a file starts the upload straight away.</p>
+                <p class="text-secondary small mb-3">Upload a different file and it takes this one's place. The link,
+                    title, and stats stay; the new file is processed from
+                    scratch@(Model.Kind == MediaKind.Video ? ", conversion included" : ""). Choosing a file starts the
+                    upload straight away.</p>
                 <partial name="_Uploader" model="replaceUploader"/>
             }
         </div>
