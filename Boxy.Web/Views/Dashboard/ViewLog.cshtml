@@ -52,8 +52,8 @@
             else if (unlogged > 0)
             {
                 <p class="text-secondary small mb-0 mt-3">
-                    @unlogged earlier view@(unlogged == 1 ? "" : "s") predate@(unlogged == 1 ? "s" : "") the log and only
-                    count toward the total.
+                    @unlogged earlier view@(unlogged == 1 ? "" : "s") only count@(unlogged == 1 ? "s" : "") toward the
+                    total: from before the log existed, or past the latest @ViewLogViewModel.Cap kept here.
                 </p>
             }
         }

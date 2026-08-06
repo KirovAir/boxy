@@ -13,22 +13,28 @@ public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFac
 {
     private readonly ConcurrentDictionary<string, string?> cache = new();
 
+    // A flood of made-up addresses must not fan out into a flood of external lookups; over this many
+    // in flight, the tag is dropped and the row just stays untagged.
+    private static readonly SemaphoreSlim Lookups = new(4);
+
     /// <summary>The viewer's IP as seen through the reverse proxy: X-Real-IP, else the first
-    /// X-Forwarded-For hop, else the socket. Display-only, so a spoofed header is merely cosmetic.</summary>
+    /// X-Forwarded-For hop, else the socket. Forwarded headers are only believed when the direct peer
+    /// is a private address (our proxy); a public peer IS the client, and its headers are noise.</summary>
     public static string? ClientIp(HttpRequest request)
     {
+        var peer = request.HttpContext.Connection.RemoteIpAddress;
+        if (peer is not null && !IsPrivate(peer))
+        {
+            return peer.ToString();
+        }
+
         var ip = request.Headers["X-Real-IP"].ToString();
         if (ip.Length == 0)
         {
             ip = request.Headers["X-Forwarded-For"].ToString().Split(',')[0].Trim();
         }
 
-        if (ip.Length == 0)
-        {
-            ip = request.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "";
-        }
-
-        return IPAddress.TryParse(ip, out var parsed) ? parsed.ToString() : null;
+        return IPAddress.TryParse(ip, out var parsed) ? parsed.ToString() : peer?.ToString();
     }
 
     /// <summary>Fire-and-forget: resolve the IP's country and stamp it onto the view row.</summary>
@@ -48,9 +54,22 @@ public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFac
         {
             if (!cache.TryGetValue(ip, out var country))
             {
-                var http = httpFactory.CreateClient("geo");
-                var doc = await http.GetFromJsonAsync<JsonElement>($"https://api.country.is/{ip}");
-                country = doc.TryGetProperty("country", out var c) ? c.GetString() : null;
+                if (!Lookups.Wait(0))
+                {
+                    return;
+                }
+
+                try
+                {
+                    var http = httpFactory.CreateClient("geo");
+                    var doc = await http.GetFromJsonAsync<JsonElement>($"https://api.country.is/{ip}");
+                    country = doc.TryGetProperty("country", out var c) ? c.GetString() : null;
+                }
+                finally
+                {
+                    Lookups.Release();
+                }
+
                 if (cache.Count > 4096)
                 {
                     cache.Clear();

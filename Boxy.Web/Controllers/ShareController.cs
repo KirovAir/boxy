@@ -90,6 +90,21 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
             db.MediaViews.Add(view);
             await db.SaveChangesAsync();
             geo.Tag(view.Id, view.Ip);
+
+            // The page only ever shows the latest Cap entries, and this is an anonymous endpoint that
+            // must not grow the database without bound. Pruning every 16th view keeps the log idling
+            // around the cap without paying the extra queries on each visit.
+            if (view.Id % 16 == 0)
+            {
+                var cutoff = await db.MediaViews.Where(v => v.MediaItemId == item.Id)
+                    .OrderByDescending(v => v.Id).Select(v => v.Id)
+                    .Skip(ViewLogViewModel.Cap).FirstOrDefaultAsync();
+                if (cutoff > 0)
+                {
+                    await db.MediaViews.Where(v => v.MediaItemId == item.Id && v.Id <= cutoff)
+                        .ExecuteDeleteAsync();
+                }
+            }
         }
 
         var likeToken = Services.UploaderCookie.Current(HttpContext);

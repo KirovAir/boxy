@@ -160,12 +160,22 @@ public class IngestionService(
         {
             await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
         }
-        else if (oldExt != extension
-                 && !await db.MediaItems.AnyAsync(m => m.Id != item.Id && m.ContentHash == oldHash && m.Extension == oldExt, ct))
+        else
         {
-            // Same bytes under a new extension: only the old container name goes. The hash-named
-            // renditions still describe this exact content, and the worker re-adopts them.
-            await storage.DeleteAsync(oldHash + oldExt, ct);
+            // Same bytes: the hash-named renditions still describe this exact content and the worker
+            // re-adopts them. A custom thumbnail is named by its own hash though - nothing would ever
+            // find it again - and a changed extension leaves the old container name unreferenced.
+            if (oldPoster is not null
+                && !await db.MediaItems.AnyAsync(m => m.Id != item.Id && m.PosterFileName == oldPoster, ct))
+            {
+                await storage.DeleteAsync(oldPoster, ct);
+            }
+
+            if (oldExt != extension
+                && !await db.MediaItems.AnyAsync(m => m.Id != item.Id && m.ContentHash == oldHash && m.Extension == oldExt, ct))
+            {
+                await storage.DeleteAsync(oldHash + oldExt, ct);
+            }
         }
 
         queue.Enqueue(item.Id);
