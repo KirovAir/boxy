@@ -11,7 +11,7 @@ namespace Boxy.Web.Services;
 /// <see cref="PasswordHasher{T}"/> (PBKDF2); there is no ASP.NET Core Identity stack. The single
 /// config admin from earlier is replaced by DB accounts, seeded on first run (see <see cref="SeedAsync"/>).
 /// </summary>
-public class UserService(IDbContextFactory<AppDbContext> dbFactory, IBlobStore storage, ILogger<UserService> logger)
+public class UserService(IDbContextFactory<AppDbContext> dbFactory, IBlobStore storage, MediaProcessingQueue queue, ILogger<UserService> logger)
 {
     /// <summary>Role claim value that gates the admin-only platform area.</summary>
     public const string AdminRole = nameof(UserRole.Admin);
@@ -241,7 +241,7 @@ public class UserService(IDbContextFactory<AppDbContext> dbFactory, IBlobStore s
         // Now the rows are gone, drop any file no surviving item still points at (dedup-safe).
         foreach (var f in ownedFiles)
         {
-            await MediaBlobs.DeleteUnreferencedAsync(db, storage, f.Id, f.ContentHash, f.Extension,
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, f.Id, f.ContentHash, f.Extension,
                 f.PosterFileName, f.WebFileName, f.HqFileName, ct);
         }
 

@@ -901,7 +901,7 @@ public class MediaProcessingWorker(
         catch (DbUpdateConcurrencyException)
         {
             logger.LogWarning("Media {Slug} was deleted while processing; dropping this run's files", item.Slug);
-            await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, item.ContentHash, item.Extension,
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, item.Id, item.ContentHash, item.Extension,
                 item.PosterFileName, item.WebFileName, item.HqFileName, ct);
             return false;
         }

@@ -158,7 +158,7 @@ public class IngestionService(
         // everything old is also everything new, and deleting would take out the file just stored.
         if (oldHash != stored.Hash)
         {
-            await MediaBlobs.DeleteUnreferencedAsync(db, storage, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, item.Id, oldHash, oldExt, oldPoster, oldWeb, oldHq, ct);
         }
         else
         {

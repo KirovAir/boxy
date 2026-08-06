@@ -19,9 +19,10 @@ namespace Boxy.Web.Services;
 public static class MediaBlobs
 {
     /// <summary>Drop the files of an item that is going away.</summary>
-    public static Task DeleteUnreferencedAsync(AppDbContext db, IBlobStore storage, MediaItem item, CancellationToken ct = default)
+    public static Task DeleteUnreferencedAsync(AppDbContext db, IBlobStore storage, MediaProcessingQueue queue,
+        MediaItem item, CancellationToken ct = default)
     {
-        return DeleteUnreferencedAsync(db, storage, item.Id, item.ContentHash, item.Extension,
+        return DeleteUnreferencedAsync(db, storage, queue, item.Id, item.ContentHash, item.Extension,
             item.PosterFileName, item.WebFileName, item.HqFileName, ct);
     }
 
@@ -30,8 +31,8 @@ public static class MediaBlobs
     /// this most is a REPLACE: the row survives, but it has moved on to different bytes, and what has to go
     /// is what it used to point at.
     /// </summary>
-    public static async Task DeleteUnreferencedAsync(AppDbContext db, IBlobStore storage, int itemId,
-        string contentHash, string extension, string? poster, string? web, string? hq, CancellationToken ct = default)
+    public static async Task DeleteUnreferencedAsync(AppDbContext db, IBlobStore storage, MediaProcessingQueue queue,
+        int itemId, string contentHash, string extension, string? poster, string? web, string? hq, CancellationToken ct = default)
     {
         // "Still referenced" always excludes the item these files came from. It has either been removed
         // already or has been repointed at new bytes, so either way its claim is gone - and excluding it by
@@ -42,6 +43,19 @@ public static class MediaBlobs
             // Keyed on hash AND extension: the same bytes re-uploaded under a different extension are a
             // different file on disk, and the old one still has to go.
             await storage.DeleteAsync(contentHash + extension, ct);
+        }
+
+        // A twin mid-pipeline holds its claims only in the worker's memory: the columns read below say
+        // "unreferenced" for the very names that run is about to advertise. Leave every derived file to
+        // that run's own sweep, which keeps what it adopts and reclaims the rest. Worth the rare leak on
+        // a profile mismatch - deleting a file mid-adoption is the loss that can't be repaired.
+        var busyTwin = (await db.MediaItems
+                .Where(m => m.Id != itemId && m.ContentHash == contentHash)
+                .Select(m => m.Id).ToListAsync(ct))
+            .Any(queue.IsPending);
+        if (busyTwin)
+        {
+            return;
         }
 
         if (poster is not null

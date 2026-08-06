@@ -635,7 +635,7 @@ public class DashboardController(
             await db.SaveChangesAsync(ct);
             foreach (var m in items)
             {
-                await MediaBlobs.DeleteUnreferencedAsync(db, storage, m, ct);
+                await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, m, ct);
             }
 
             this.FlashSuccess($"Deleted {items.Count} item{(items.Count == 1 ? "" : "s")}.");
@@ -1573,7 +1573,7 @@ public class DashboardController(
         var bucketId = item.BucketId;
         db.MediaItems.Remove(item);
         await db.SaveChangesAsync(ct);
-        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item, ct);
+        await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, item, ct);
 
         // A drop-off is managed on its box page; a share on the dashboard. Return to whichever it was.
         if (bucketId is int bid)

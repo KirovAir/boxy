@@ -16,6 +16,7 @@ namespace Boxy.Web.Services;
 public class RetentionSweepService(
     IDbContextFactory<AppDbContext> dbFactory,
     IBlobStore storage,
+    MediaProcessingQueue queue,
     IEmailSender email,
     EmailComposer composer,
     IConfiguration config,
@@ -89,7 +90,7 @@ public class RetentionSweepService(
 
         foreach (var m in shares.Concat(drops))
         {
-            await MediaBlobs.DeleteUnreferencedAsync(db, storage, m, ct);
+            await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, m, ct);
         }
 
         logger.LogInformation(

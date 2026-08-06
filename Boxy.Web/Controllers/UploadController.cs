@@ -20,6 +20,7 @@ public class UploadController(
     ChunkedUploadService chunked,
     UploadFinalizer finalizer,
     IBlobStore storage,
+    MediaProcessingQueue queue,
     ILogger<UploadController> logger) : Controller
 {
     /// <summary>
@@ -354,7 +355,7 @@ public class UploadController(
 
     private async Task DeleteItemAsync(AppDbContext db, MediaItem item)
     {
-        await MediaBlobs.DeleteUnreferencedAsync(db, storage, item);
+        await MediaBlobs.DeleteUnreferencedAsync(db, storage, queue, item);
         db.MediaItems.Remove(item);
         await db.SaveChangesAsync();
     }
