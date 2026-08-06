@@ -11,7 +11,7 @@
     <title>@Brand.Title(Model.Title)</title>
     @if (!string.IsNullOrWhiteSpace(Model.Description))
     {
-        <meta name="description" content="@Model.Description"/>
+        <meta name="description" content="@Descriptions.ToPlainText(Model.Description)"/>
     }
 
     @* ── OpenGraph: rendered server-side so chat apps/crawlers get a rich preview ── *@
@@ -20,7 +20,7 @@
     <meta property="og:title" content="@Model.Title"/>
     @if (!string.IsNullOrWhiteSpace(Model.Description))
     {
-        <meta property="og:description" content="@Model.Description"/>
+        <meta property="og:description" content="@Descriptions.ToPlainText(Model.Description)"/>
     }
     <meta property="og:url" content="@Model.PageUrl"/>
     <meta property="og:image" content="@Model.OgImageUrl"/>
@@ -40,7 +40,7 @@
     <meta name="twitter:title" content="@Model.Title"/>
     @if (!string.IsNullOrWhiteSpace(Model.Description))
     {
-        <meta name="twitter:description" content="@Model.Description"/>
+        <meta name="twitter:description" content="@Descriptions.ToPlainText(Model.Description)"/>
     }
     <meta name="twitter:image" content="@Model.OgImageUrl"/>
 
@@ -160,7 +160,7 @@
             </div>
             @if (!string.IsNullOrWhiteSpace(Model.Description))
             {
-                <div class="share-desc">@Model.Description</div>
+                <div class="share-desc">@Html.Raw(Descriptions.ToHtml(Model.Description))</div>
             }
         </div>
     </div>

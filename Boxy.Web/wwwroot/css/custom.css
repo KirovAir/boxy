@@ -1087,13 +1087,28 @@ a {
     margin: .2rem 0 1.25rem;
 }
 
+/* Rendered markdown: line breaks come out of the renderer as real <br>/<p>, so no pre-wrap - it
+   would double every newline that is also in the HTML source. */
 .share-desc {
     background: #1b1c1f;
     border: 1px solid #2a2b2f;
     border-radius: .5rem;
     padding: .75rem 1rem;
-    white-space: pre-wrap;
     color: #c9c9cc;
+}
+
+.share-desc p {
+    margin-bottom: .4rem;
+}
+
+.share-desc p:last-child,
+.share-desc ul:last-child,
+.share-desc ol:last-child {
+    margin-bottom: 0;
+}
+
+.share-desc a {
+    color: #9ec1ff;
 }
 
 .share-page .btn-outline-light {
