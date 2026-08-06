@@ -42,8 +42,9 @@
                         <div class="small text-secondary mono">
                             @foreach (var v in day.OrderBy(t => t.At))
                             {
+                                @* Whole seconds only: Safari's Date() rejects the 7-digit fraction of "o". *@
                                 <span class="me-2" title="@(v.Ip ?? "IP unknown")"><time
-                                        datetime="@DateTime.SpecifyKind(v.At, DateTimeKind.Utc).ToString("o")"
+                                        datetime="@v.At.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")"
                                         data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")@(v.IsOwner ? " (you)" : "")</span>
                             }
                         </div>
