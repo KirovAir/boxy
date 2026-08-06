@@ -71,8 +71,10 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         }
 
         // These are user-uploaded bytes served from our own origin: never let the browser MIME-sniff
-        // them into something executable.
+        // them into something executable. And an unlisted share's bytes are no search engine's to keep:
+        // the page already says noindex, this covers the directly-linked media itself.
         Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers["X-Robots-Tag"] = "noindex";
 
         // The H.265 rendition, when this item has one and the browser asked for it by name. It is always an
         // mp4 (that is what makes it a rendition), and it may BE the original blob - an upload that already
@@ -153,6 +155,7 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
         }
 
         Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers["X-Robots-Tag"] = "noindex";
         // Playlists and segment ranges are re-requested by the player as it goes; a replaced rendition
         // must never be stitched together from cached pieces of the old one, so nothing here caches hard.
         Response.Headers.CacheControl = "private, no-cache";
@@ -359,6 +362,7 @@ public class MediaController(IDbContextFactory<AppDbContext> dbFactory, IBlobSto
             return NotFound();
         }
 
+        Response.Headers["X-Robots-Tag"] = "noindex";
         // The URL carries a ?v= content token, so a given URL always maps to the same bytes: cache it
         // hard. A bare hit (no token) revalidates instead, so a replaced thumbnail is still picked up.
         Response.Headers.CacheControl = Request.Query.ContainsKey("v")

@@ -9,6 +9,9 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>@Brand.Title(Model.Title)</title>
+    @* A share is an unlisted link, not a web page: whoever holds the URL may look, search engines may
+       not remember it. Every other page gets this via _Layout; this one is layoutless, so say it here. *@
+    <meta name="robots" content="noindex"/>
     @if (!string.IsNullOrWhiteSpace(Model.Description))
     {
         <meta name="description" content="@Descriptions.ToPlainText(Model.Description)"/>
