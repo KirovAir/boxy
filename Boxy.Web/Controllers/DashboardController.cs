@@ -360,7 +360,7 @@ public class DashboardController(
             try
             {
                 await using var stream = file.OpenReadStream();
-                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, null, true, null, UserId, profile, expiry, maxBytes, UserId, ct);
+                await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, null, true, null, null, UserId, profile, expiry, maxBytes, UserId, ct);
                 count++;
             }
             catch (QuotaExceededException)
@@ -463,7 +463,7 @@ public class DashboardController(
         var userId = UserId;
 
         var run = finalizer.StartOrJoin(uploadId, (services, jobCt) => AssembleAsync(services,
-            async chunked => (MediaItem?)await chunked.CompleteAsync(uploadId, layout, name, null, true, null, userId, chosen, expiry, maxBytes, userId, jobCt)));
+            async chunked => (MediaItem?)await chunked.CompleteAsync(uploadId, layout, name, null, true, null, null, userId, chosen, expiry, maxBytes, userId, jobCt)));
 
         return await UploadResults.AwaitOrAcceptAsync(run);
     }

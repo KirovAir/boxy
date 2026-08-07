@@ -134,6 +134,10 @@
                         }
                     </ul>
                     <partial name="_Pager" model='PagerVm.For(Model.Files, "fp", "files")'/>
+                    @if (Model.Files.Items.Any(m => m.UploaderIp is { Length: > 0 }))
+                    {
+                        <partial name="_GeoAttribution"/>
+                    }
                 </div>
             </div>
         </div>

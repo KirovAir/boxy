@@ -88,8 +88,9 @@
                                 var hover = string.Join(" · ", new[] { v.Ip ?? "IP unknown", v.Geo.Place, v.Geo.Provider }
                                     .Where(s => !string.IsNullOrEmpty(s)));
                                 @* Whole seconds only: Safari's Date() rejects the 7-digit fraction of "o". *@
-                                <span class="view-chip" title="@hover" data-ip="@v.Ip" data-place="@v.Geo.Place"
-                                      data-provider="@v.Geo.Provider"><time
+                                <span class="view-chip" title="@hover" tabindex="0" role="button"
+                                      data-geo data-geo-ip="@v.Ip" data-geo-place="@v.Geo.Place"
+                                      data-geo-provider="@v.Geo.Provider"><time
                                         datetime="@v.At.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")"
                                         data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Geo.Country) is { Length: > 0 } flag ? " " + flag : "")</span>
                             }
@@ -110,10 +111,7 @@
             }
             @if (hasGeo)
             {
-                @* The DB-IP Lite databases are CC BY 4.0; this link is the required attribution. *@
-                <p class="text-secondary small mb-0 mt-3">
-                    Locations resolved on this server, IP geolocation by <a href="https://db-ip.com" target="_blank">DB-IP</a>.
-                </p>
+                <partial name="_GeoAttribution"/>
             }
         }
     </div>

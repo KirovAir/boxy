@@ -1511,13 +1511,17 @@ a.up-chip:hover {
     white-space: nowrap;
 }
 
-/* Only the time chips open the popover; the audience summary reuses the chip look, unclickable. */
-[data-view-log] .view-chip {
+[data-geo] {
     cursor: pointer;
 }
 
-/* Tapping a chip opens this: place and provider, and the IP as a one-tap copy. */
-.view-pop {
+/* Where a drop-off came from, sitting beside the uploader chip on a file row. */
+.geo-chip {
+    border-bottom: 1px dotted var(--kraft-line);
+}
+
+/* Tapping a [data-geo] chip opens this: place and provider, and the IP as a one-tap copy. */
+.geo-pop {
     position: absolute;
     z-index: 10;
     background: var(--kraft-card);
@@ -1530,7 +1534,7 @@ a.up-chip:hover {
     box-shadow: 0 2px 6px rgba(42, 32, 24, .12);
 }
 
-.view-pop .view-pop-ip {
+.geo-pop .geo-pop__ip {
     border: 0;
     padding: 0;
     background: none;

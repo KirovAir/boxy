@@ -267,6 +267,13 @@ public class MediaItem : AuditableEntity
     /// </summary>
     public string? UploaderToken { get; set; }
 
+    /// <summary>
+    /// Where a drop-off came from, as the proxy reported it. Only set for anonymous box uploads (an
+    /// owner's own upload would just record the owner's address); location and provider are looked up
+    /// from this at display time, never stored.
+    /// </summary>
+    public string? UploaderIp { get; set; }
+
     public string? ErrorMessage { get; set; }
 }
 

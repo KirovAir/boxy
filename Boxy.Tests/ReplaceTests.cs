@@ -109,7 +109,7 @@ public class ReplaceTests
     private async Task<MediaItem> Ingest(byte[] bytes, string name)
     {
         using var stream = new MemoryStream(bytes);
-        return await _ingestion.IngestAsync(UploadSource.FromStream(stream), name, null, true, null, OwnerId);
+        return await _ingestion.IngestAsync(UploadSource.FromStream(stream), name, null, true, null, null, OwnerId);
     }
 
     private async Task<MediaItem?> Replace(int itemId, byte[] bytes, string name)

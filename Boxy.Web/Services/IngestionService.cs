@@ -26,6 +26,7 @@ public class IngestionService(
         int? bucketId,
         bool published,
         string? uploaderToken = null,
+        string? uploaderIp = null,
         int? ownerId = null,
         ConversionProfile profile = ConversionProfiles.Fallback,
         DateTime? expiresAt = null,
@@ -78,6 +79,7 @@ public class IngestionService(
                 Status = MediaStatus.Uploaded,
                 Published = published,
                 UploaderToken = uploaderToken,
+                UploaderIp = uploaderIp,
                 OwnerId = ownerIdFinal,
                 Profile = profile,
                 ExpiresAt = expiresAt

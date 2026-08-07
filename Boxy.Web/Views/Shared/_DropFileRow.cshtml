@@ -1,9 +1,11 @@
 @model DropFileRow
+@inject Boxy.Web.Services.GeoLookup Geo
 @{
     var m = Model.Item;
     var ready = m.Status == MediaStatus.Ready;
     var kind = MediaKinds.LightboxKind(m);
     var uploader = UploaderIdentity.For(m.UploaderToken);
+    var geo = Geo.Locate(m.UploaderIp);
     // A link only where there's a single query scope to filter (a box); on the combined dashboard list
     // the same chip renders as a plain label.
     var uploaderUrl = uploader is not null && Model.UploaderKey is not null
@@ -68,6 +70,19 @@
                         <span class="up-dot" style="background:@uploader.Color"></span>@uploader.Name
                     </span>
                 }
+                <span aria-hidden="true">·</span>
+            }
+            @if (m.UploaderIp is { Length: > 0 } ip)
+            {
+                var hover = string.Join(" · ", new[] { ip, geo.Place, geo.Provider }.Where(s => !string.IsNullOrEmpty(s)));
+                <span class="geo-chip" title="@hover" tabindex="0" role="button"
+                      data-geo data-geo-ip="@ip" data-geo-place="@geo.Place" data-geo-provider="@geo.Provider">
+                    @if (Format.Flag(geo.Country) is { Length: > 0 } flag)
+                    {
+                        <text>@flag</text>
+                    }
+                    @(geo.City ?? geo.Country ?? "Where from")
+                </span>
                 <span aria-hidden="true">·</span>
             }
             <partial name="_TimeAgo" model="m.CreatedDate"/>

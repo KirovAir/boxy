@@ -113,6 +113,7 @@ public class UploadController(
             {
                 await using var stream = file.OpenReadStream();
                 await ingestion.IngestAsync(UploadSource.FromStream(stream), file.FileName, bucket.Id, false, token,
+                    GeoLookup.ClientIp(Request),
                     profile: ProfileForDrop(bucket), maxBytes: maxBytes, quotaOwnerId: bucket.OwnerId, ct: ct);
                 count++;
             }
@@ -223,9 +224,11 @@ public class UploadController(
         var maxBytes = await MaxUploadBytesAsync(bucket);
         var profile = ProfileForDrop(bucket);
         var (bucketId, ownerId) = (bucket.Id, bucket.OwnerId);
+        // Read off the request now: assembly is detached and outlives it.
+        var ip = GeoLookup.ClientIp(Request);
 
         var run = finalizer.StartOrJoin(uploadId, (services, ct) => AssembleAsync(services,
-            chunked => chunked.CompleteAsync(uploadId, layout, name, bucketId, false, token,
+            chunked => chunked.CompleteAsync(uploadId, layout, name, bucketId, false, token, ip,
                 profile: profile, maxBytes: maxBytes, quotaOwnerId: ownerId, ct: ct)));
 
         return await UploadResults.AwaitOrAcceptAsync(run);

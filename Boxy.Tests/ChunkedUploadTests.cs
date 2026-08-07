@@ -188,7 +188,7 @@ public class ChunkedUploadTests
         }
 
         var item = await _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 3), "clip.mp4",
-            null, true, null, OwnerId);
+            null, true, null, null, OwnerId);
 
         Assert.AreEqual(data.Length, item.SizeBytes);
         Assert.AreEqual(Sha256Hex(data), item.ContentHash);
@@ -208,7 +208,7 @@ public class ChunkedUploadTests
             await WriteChunk(id, i, Slice(data, i, chunk));
         }
 
-        await _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 4), "clip.mp4", null, true, null, OwnerId);
+        await _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 4), "clip.mp4", null, true, null, null, OwnerId);
 
         AssertScratchIsEmpty();
         // One stored blob, and no leftover tmp_* copy from a second pass over the bytes.
@@ -227,7 +227,7 @@ public class ChunkedUploadTests
         await WriteChunk(id, 2, Slice(data, 2, chunk));
 
         await Assert.ThrowsExactlyAsync<UploadIncompleteException>(() =>
-            _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 3), "clip.mp4", null, true, null, OwnerId));
+            _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 3), "clip.mp4", null, true, null, null, OwnerId));
 
         AssertScratchIsEmpty();
         Assert.AreEqual(0, Directory.GetFiles(_root).Length, "a rejected upload must not leave bytes behind");
@@ -243,7 +243,7 @@ public class ChunkedUploadTests
         await WriteChunk(id, 2, Slice(data, 2, chunk)); // chunk 1 never arrived
 
         await Assert.ThrowsExactlyAsync<UploadIncompleteException>(() =>
-            _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 3), "clip.mp4", null, true, null, OwnerId));
+            _chunked.CompleteAsync(id, new UploadLayout(data.Length, chunk, 3), "clip.mp4", null, true, null, null, OwnerId));
 
         AssertScratchIsEmpty();
     }
@@ -255,7 +255,7 @@ public class ChunkedUploadTests
         await WriteChunk(id, 0, new byte[100]);
 
         await Assert.ThrowsExactlyAsync<UploadIncompleteException>(() =>
-            _chunked.CompleteAsync(id, new UploadLayout(300, 100, 9), "clip.mp4", null, true, null, OwnerId));
+            _chunked.CompleteAsync(id, new UploadLayout(300, 100, 9), "clip.mp4", null, true, null, null, OwnerId));
     }
 
     // ── Concurrency ─────────────────────────────────────────────────────────

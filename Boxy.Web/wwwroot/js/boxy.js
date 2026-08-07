@@ -158,7 +158,7 @@
     document.addEventListener('click', function (e) {
         var row = e.target.closest('[data-lightbox]');
         if (!row) return;
-        if (e.target.closest('a, button, form, input, label')) return;
+        if (e.target.closest('a, button, form, input, label, [data-geo]')) return;
         var slug = row.getAttribute('data-slug');
         if (!slug) return;
         Boxy.lightbox(slug, row.getAttribute('data-kind') || 'file');
@@ -210,6 +210,89 @@
         } catch (e) {
         }
     }
+
+    // ── Where-from popover ─────────────────────────────────────────────────────
+    // <span data-geo data-geo-ip data-geo-place data-geo-provider> opens the visitor's city,
+    // provider and IP on click, with the IP as a copy button (the data-copy handler above does
+    // the copying). Used by the view log's time chips and the drop-off rows.
+    var geoPop = null;
+
+    function closeGeo() {
+        if (geoPop) {
+            geoPop.remove();
+            geoPop = null;
+        }
+    }
+
+    function openGeo(trigger) {
+        closeGeo();
+        geoPop = document.createElement('div');
+        geoPop.className = 'geo-pop';
+        geoPop.trigger = trigger;
+
+        var where = [trigger.getAttribute('data-geo-place'), trigger.getAttribute('data-geo-provider')]
+            .filter(function (s) { return s; }).join(' · ');
+        if (where) {
+            var line = document.createElement('div');
+            line.textContent = where;
+            geoPop.appendChild(line);
+        }
+
+        var ip = trigger.getAttribute('data-geo-ip');
+        if (ip) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'geo-pop__ip mono';
+            btn.setAttribute('data-copy', ip);
+            btn.setAttribute('data-copy-label', 'Copied');
+            btn.setAttribute('aria-label', 'Copy IP ' + ip);
+            btn.textContent = ip + ' ';
+            var icon = document.createElement('i');
+            icon.className = 'bi bi-copy';
+            icon.setAttribute('aria-hidden', 'true');
+            btn.appendChild(icon);
+            geoPop.appendChild(btn);
+        } else if (!where) {
+            geoPop.textContent = 'Nothing known about this address';
+        }
+
+        document.body.appendChild(geoPop);
+        var r = trigger.getBoundingClientRect();
+        var left = Math.min(r.left, document.documentElement.clientWidth - geoPop.offsetWidth - 8);
+        geoPop.style.left = Math.max(left + window.scrollX, 0) + 'px';
+        geoPop.style.top = (r.bottom + window.scrollY + 4) + 'px';
+    }
+
+    document.addEventListener('click', function (e) {
+        var trigger = e.target.closest('[data-geo]');
+        if (trigger) {
+            e.preventDefault();
+            if (geoPop && geoPop.trigger === trigger) {
+                closeGeo();
+            } else {
+                openGeo(trigger);
+            }
+            return;
+        }
+
+        // A click on the popover itself (the copy button) leaves it open.
+        if (geoPop && !geoPop.contains(e.target)) {
+            closeGeo();
+        }
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            closeGeo();
+            return;
+        }
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[data-geo]')) {
+            e.preventDefault();
+            e.target.click();
+        }
+    });
+
+    window.addEventListener('resize', closeGeo);
 
     // ── Bulk select ────────────────────────────────────────────────────────────
     // A [data-bulk] scope contains .bulk-check item boxes, an optional .bulk-all toggle,
