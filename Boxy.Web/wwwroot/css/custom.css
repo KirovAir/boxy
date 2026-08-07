@@ -1510,3 +1510,30 @@ a.up-chip:hover {
     margin: 0 .25rem .25rem 0;
     white-space: nowrap;
 }
+
+/* Only the time chips open the popover; the audience summary reuses the chip look, unclickable. */
+[data-view-log] .view-chip {
+    cursor: pointer;
+}
+
+/* Tapping a chip opens this: place and provider, and the IP as a one-tap copy. */
+.view-pop {
+    position: absolute;
+    z-index: 10;
+    background: var(--kraft-card);
+    border: 1px solid var(--kraft-line);
+    border-radius: .4rem;
+    padding: .3rem .55rem;
+    font-size: .8rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(42, 32, 24, .12);
+}
+
+.view-pop .view-pop-ip {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+}

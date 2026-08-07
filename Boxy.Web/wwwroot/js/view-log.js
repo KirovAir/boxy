@@ -55,6 +55,109 @@
         note.remove();
     }
 
+    // ── Chip popover: place, provider, and the IP with one-tap copy ────────────
+    var pop = null;
+    function closePop() {
+        if (pop) {
+            pop.remove();
+            pop = null;
+        }
+    }
+
+    function copyIp(ip, btn) {
+        function done() {
+            btn.textContent = 'Copied';
+            setTimeout(closePop, 900);
+        }
+        function fallback() {
+            var ta = document.createElement('textarea');
+            ta.value = ip;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (e) { /* the popover still showed the IP */ }
+            ta.remove();
+            done();
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(ip).then(done, fallback);
+        } else {
+            fallback();
+        }
+    }
+
+    function openPop(chip) {
+        closePop();
+        pop = document.createElement('div');
+        pop.className = 'view-pop';
+        pop.chip = chip;
+
+        var where = [chip.getAttribute('data-place'), chip.getAttribute('data-provider')]
+            .filter(function (s) { return s; }).join(' · ');
+        if (where) {
+            var line = document.createElement('div');
+            line.textContent = where;
+            pop.appendChild(line);
+        }
+
+        var ip = chip.getAttribute('data-ip');
+        if (ip) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'view-pop-ip mono';
+            btn.textContent = ip + ' ';
+            var icon = document.createElement('i');
+            icon.className = 'bi bi-copy';
+            icon.setAttribute('aria-hidden', 'true');
+            btn.appendChild(icon);
+            btn.setAttribute('aria-label', 'Copy IP ' + ip);
+            btn.addEventListener('click', function () {
+                copyIp(ip, btn);
+            });
+            pop.appendChild(btn);
+        } else if (!where) {
+            pop.textContent = 'IP unknown';
+        }
+
+        document.body.appendChild(pop);
+        var r = chip.getBoundingClientRect();
+        var left = Math.min(r.left, document.documentElement.clientWidth - pop.offsetWidth - 8);
+        pop.style.left = Math.max(left + window.scrollX, 0) + 'px';
+        pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
+    }
+
+    chips.forEach(function (t) {
+        var chip = t.parentElement;
+        chip.setAttribute('tabindex', '0');
+        chip.setAttribute('role', 'button');
+        chip.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (pop && pop.chip === chip) {
+                closePop();
+            } else {
+                openPop(chip);
+            }
+        });
+        chip.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                chip.click();
+            }
+        });
+    });
+
+    document.addEventListener('click', function (e) {
+        if (pop && !pop.contains(e.target)) {
+            closePop();
+        }
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            closePop();
+        }
+    });
+
     // ── Views per day, the last 30 ─────────────────────────────────────────────
     // One series on the kraft card, so the bars wear brand-deep (validated against the surface) and
     // every label stays in ink. A single day of data has nothing to plot; the list already says it.

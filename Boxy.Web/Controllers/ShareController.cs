@@ -9,7 +9,7 @@ namespace Boxy.Web.Controllers;
 /// <summary>Public share page with server-rendered OpenGraph metadata. An admin's shares live at
 /// <c>/s/{slug}</c>; a regular user's under their username at <c>/s/{username}/{slug}</c>. The stable
 /// token always resolves at the root too, so links never break after a rename.</summary>
-public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfiguration config, Services.ShareUnlock unlock, Services.GeoLookup geo) : Controller
+public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfiguration config, Services.ShareUnlock unlock) : Controller
 {
     [HttpGet("/s/{slug}")]
     public Task<IActionResult> Index(string slug)
@@ -82,13 +82,13 @@ public class ShareController(IDbContextFactory<AppDbContext> dbFactory, IConfigu
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.Views, m => m.Views + 1));
         }
 
-        // The log mirrors the counter exactly: real visitors only. The country fills in afterwards.
+        // The log mirrors the counter exactly: real visitors only. Just the moment and the IP;
+        // location resolves from it when the owner looks.
         if (incremented)
         {
             var view = new MediaView { MediaItemId = item.Id, Ip = Services.GeoLookup.ClientIp(Request) };
             db.MediaViews.Add(view);
             await db.SaveChangesAsync();
-            geo.Tag(view.Id, view.Ip);
 
             // The page only ever shows the latest Cap entries, and this is an anonymous endpoint that
             // must not grow the database without bound. Pruning every 16th view keeps the log idling

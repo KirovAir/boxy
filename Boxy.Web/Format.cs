@@ -58,4 +58,18 @@ public static class Format
 
         return char.ConvertFromUtf32(0x1F1E6 + c[0] - 'A') + char.ConvertFromUtf32(0x1F1E6 + c[1] - 'A');
     }
+
+    /// <summary>Country code to its English name ("NL" → "Netherlands"); the code itself when ICU
+    /// doesn't know it.</summary>
+    public static string CountryName(string country)
+    {
+        try
+        {
+            return new RegionInfo(country).EnglishName;
+        }
+        catch (ArgumentException)
+        {
+            return country;
+        }
+    }
 }

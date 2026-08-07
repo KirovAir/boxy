@@ -25,6 +25,7 @@ public class DashboardController(
     MediaProcessingQueue queue,
     IEmailSender emailSender,
     EmailComposer emailComposer,
+    GeoLookup geo,
     IConfiguration config,
     ILogger<DashboardController> logger) : Controller
 {
@@ -797,9 +798,13 @@ public class DashboardController(
             .Where(v => v.MediaItemId == id)
             .OrderByDescending(v => v.CreatedDate)
             .Take(ViewLogViewModel.Cap)
-            .Select(v => new ViewLogRow(v.CreatedDate, v.Ip, v.Country))
+            .Select(v => new { v.CreatedDate, v.Ip })
             .ToListAsync();
-        return View(new ViewLogViewModel { Item = item, Views = views });
+        return View(new ViewLogViewModel
+        {
+            Item = item,
+            Views = views.Select(v => new ViewLogRow(v.CreatedDate, v.Ip, geo.Locate(v.Ip))).ToList()
+        });
     }
 
     [HttpPost("media/{id:int}")]

@@ -19,7 +19,8 @@
         <h2 class="h6 mb-1">@Model.Item.Title</h2>
         <p class="text-secondary small mb-3">
             @Model.Item.Views view@(Model.Item.Views == 1 ? "" : "s") total. Every visit to the share page counts,
-            repeat visitors included; your own visits and link-preview bots don't. Hover a time for the IP.
+            repeat visitors included; your own visits and link-preview bots don't. Tap a time for the
+            visitor's IP, location and provider.
             <span data-utc-note>Times are UTC.</span>
         </p>
 
@@ -31,6 +32,46 @@
         }
         else
         {
+            var countries = Model.Views.Where(v => v.Geo.Country is not null)
+                .GroupBy(v => v.Geo.Country!).OrderByDescending(g => g.Count()).ToList();
+            var providers = Model.Views.Where(v => !string.IsNullOrEmpty(v.Geo.Provider))
+                .GroupBy(v => v.Geo.Provider!).OrderByDescending(g => g.Count()).ToList();
+            var hasGeo = countries.Count > 0 || providers.Count > 0;
+
+            @if (hasGeo)
+            {
+                <div class="small mb-3">
+                    @if (countries.Count > 0)
+                    {
+                        <div>
+                            <span class="text-secondary">Countries</span>
+                            @foreach (var g in countries.Take(5))
+                            {
+                                <span class="view-chip">@Format.Flag(g.Key) @Format.CountryName(g.Key) · @g.Count()</span>
+                            }
+                            @if (countries.Count > 5)
+                            {
+                                <span class="text-secondary">+@(countries.Count - 5) more</span>
+                            }
+                        </div>
+                    }
+                    @if (providers.Count > 0)
+                    {
+                        <div>
+                            <span class="text-secondary">Providers</span>
+                            @foreach (var g in providers.Take(5))
+                            {
+                                <span class="view-chip">@g.Key · @g.Count()</span>
+                            }
+                            @if (providers.Count > 5)
+                            {
+                                <span class="text-secondary">+@(providers.Count - 5) more</span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
             @* Filled by view-log.js from the same entries as the list; stays hidden without script. *@
             <div class="view-log-chart mb-4" data-view-chart hidden></div>
 
@@ -44,10 +85,13 @@
                         <div class="small text-secondary mono">
                             @foreach (var v in day.OrderBy(t => t.At))
                             {
+                                var hover = string.Join(" · ", new[] { v.Ip ?? "IP unknown", v.Geo.Place, v.Geo.Provider }
+                                    .Where(s => !string.IsNullOrEmpty(s)));
                                 @* Whole seconds only: Safari's Date() rejects the 7-digit fraction of "o". *@
-                                <span class="view-chip" title="@(v.Ip ?? "IP unknown")"><time
+                                <span class="view-chip" title="@hover" data-ip="@v.Ip" data-place="@v.Geo.Place"
+                                      data-provider="@v.Geo.Provider"><time
                                         datetime="@v.At.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")"
-                                        data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Country) is { Length: > 0 } flag ? " " + flag : "")</span>
+                                        data-view>@v.At.ToString("HH:mm")</time>@(Format.Flag(v.Geo.Country) is { Length: > 0 } flag ? " " + flag : "")</span>
                             }
                         </div>
                     </div>
@@ -62,6 +106,13 @@
                 <p class="text-secondary small mb-0 mt-3">
                     @unlogged earlier view@(unlogged == 1 ? "" : "s") only count@(unlogged == 1 ? "s" : "") toward the
                     total: from before the log existed, or past the latest @ViewLogViewModel.Cap kept here.
+                </p>
+            }
+            @if (hasGeo)
+            {
+                @* The DB-IP Lite databases are CC BY 4.0; this link is the required attribution. *@
+                <p class="text-secondary small mb-0 mt-3">
+                    Locations resolved on this server, IP geolocation by <a href="https://db-ip.com" target="_blank">DB-IP</a>.
                 </p>
             }
         }

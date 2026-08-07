@@ -123,8 +123,9 @@ await builder.RunWithLoggingAsync(async b =>
     // to an address the SSRF check already validated away from.
     b.Services.AddHttpClient("webhook", c => c.Timeout = TimeSpan.FromSeconds(10))
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
-    // Country tag for the view log: short timeout, resolved off the request thread.
-    b.Services.AddHttpClient("geo", c => c.Timeout = TimeSpan.FromSeconds(5));
+    // View-log geolocation: local DB-IP Lite lookups, so no visitor IP leaves the server. The
+    // refresh service pulls the monthly editions; the city file is large, hence the long timeout.
+    b.Services.AddHttpClient("geodb", c => c.Timeout = TimeSpan.FromMinutes(10));
     b.Services.AddSingleton<GeoLookup>();
     b.Services.AddSingleton<QuotaService>();
     b.Services.AddScoped<IngestionService>();
@@ -144,6 +145,7 @@ await builder.RunWithLoggingAsync(async b =>
     b.Services.AddHostedService<TempCleanupService>();
     b.Services.AddHostedService<RetentionSweepService>();
     b.Services.AddHostedService<NotificationWorker>();
+    b.Services.AddHostedService<GeoDbRefreshService>();
 
     var app = b.Build();
 

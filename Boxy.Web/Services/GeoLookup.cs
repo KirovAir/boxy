@@ -1,21 +1,20 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json;
-using Boxy.Data;
+using MaxMind.GeoIP2;
 
 namespace Boxy.Web.Services;
 
-/// <summary>Best-effort country tag for view log entries, resolved in the background so the share
-/// page never waits on it. Uses api.country.is (free, keyless); a private or unresolvable IP simply
-/// stays untagged and the log shows the bare time.</summary>
-public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFactory httpFactory, ILogger<GeoLookup> logger)
+/// <summary>In-process IP geolocation for the view log, reading the DB-IP Lite databases that
+/// <see cref="GeoDbRefreshService"/> keeps on disk. No visitor IP ever leaves the server for this.
+/// Until the databases exist (first boot, host without internet) every lookup simply comes back
+/// empty and the log shows bare times.</summary>
+public class GeoLookup
 {
-    private readonly ConcurrentDictionary<string, string?> cache = new();
+    public const string CityFile = "dbip-city-lite.mmdb";
+    public const string AsnFile = "dbip-asn-lite.mmdb";
 
-    // A flood of made-up addresses must not fan out into a flood of external lookups; over this many
-    // in flight, the tag is dropped and the row just stays untagged.
-    private static readonly SemaphoreSlim Lookups = new(4);
+    private DatabaseReader? city;
+    private DatabaseReader? asn;
 
     /// <summary>The viewer's IP as seen through the reverse proxy: X-Real-IP, else the first
     /// X-Forwarded-For hop, else the socket. Forwarded headers are only believed when the direct peer
@@ -40,60 +39,42 @@ public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFac
         return IPAddress.TryParse(ip, out var parsed) ? parsed.ToString() : peer?.ToString();
     }
 
-    /// <summary>Fire-and-forget: resolve the IP's country and stamp it onto the view row.</summary>
-    public void Tag(int viewId, string? ip)
+    /// <summary>Where a view came from: country, city and network provider, each null when the
+    /// databases don't know. A private or unparsable IP resolves to nothing.</summary>
+    public GeoInfo Locate(string? ip)
     {
         if (ip is null || !IPAddress.TryParse(ip, out var parsed) || IsPrivate(parsed))
         {
-            return;
+            return GeoInfo.None;
         }
 
-        _ = Task.Run(() => TagAsync(viewId, ip));
+        string? country = null, place = null, provider = null;
+        if (city is { } cities && cities.TryCity(parsed, out var c))
+        {
+            country = c?.Country.IsoCode;
+            place = c?.City.Name;
+        }
+
+        if (asn is { } networks && networks.TryAsn(parsed, out var a))
+        {
+            provider = a?.AutonomousSystemOrganization;
+        }
+
+        return new GeoInfo(country, place, provider);
     }
 
-    private async Task TagAsync(int viewId, string ip)
+    /// <summary>(Re)opens whichever databases exist in <paramref name="dir"/>. Readers being swapped
+    /// out are not disposed: a lookup on another thread may still hold one, and a dropped
+    /// memory-mapped reader costs nothing until the GC gets to it.</summary>
+    public void Load(string dir)
     {
-        try
-        {
-            if (!cache.TryGetValue(ip, out var country))
-            {
-                if (!Lookups.Wait(0))
-                {
-                    return;
-                }
+        city = Open(Path.Combine(dir, CityFile)) ?? city;
+        asn = Open(Path.Combine(dir, AsnFile)) ?? asn;
+    }
 
-                try
-                {
-                    var http = httpFactory.CreateClient("geo");
-                    var doc = await http.GetFromJsonAsync<JsonElement>($"https://api.country.is/{ip}");
-                    country = doc.TryGetProperty("country", out var c) ? c.GetString() : null;
-                }
-                finally
-                {
-                    Lookups.Release();
-                }
-
-                if (cache.Count > 4096)
-                {
-                    cache.Clear();
-                }
-
-                cache[ip] = country;
-            }
-
-            if (country is null)
-            {
-                return;
-            }
-
-            await using var db = await dbFactory.CreateDbContextAsync();
-            await db.MediaViews.Where(v => v.Id == viewId)
-                .ExecuteUpdateAsync(s => s.SetProperty(v => v.Country, country));
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Country lookup failed for view {ViewId}", viewId);
-        }
+    private static DatabaseReader? Open(string path)
+    {
+        return File.Exists(path) ? new DatabaseReader(path) : null;
     }
 
     private static bool IsPrivate(IPAddress ip)
@@ -117,4 +98,13 @@ public class GeoLookup(IDbContextFactory<AppDbContext> dbFactory, IHttpClientFac
 
         return ip.IsIPv6LinkLocal || ip.IsIPv6UniqueLocal;
     }
+}
+
+/// <summary>What the databases know about one viewer's IP.</summary>
+public record GeoInfo(string? Country, string? City, string? Provider)
+{
+    public static readonly GeoInfo None = new(null, null, null);
+
+    /// <summary>"Amsterdam, NL", just "NL" when the city is unknown, or null when nothing resolved.</summary>
+    public string? Place => Country is null ? null : City is null ? Country : $"{City}, {Country}";
 }

@@ -1,7 +1,7 @@
 namespace Boxy.Data.Entities;
 
-/// <summary>One counted view of a share's page: the moment, and the viewer's IP with a best-effort
-/// country tag. Exactly the views the counter counts - no owner previews, no bots.</summary>
+/// <summary>One counted view of a share's page: the moment, and the viewer's IP. Exactly the views
+/// the counter counts - no owner previews, no bots.</summary>
 public class MediaView : AuditableEntity
 {
     public int Id { get; set; }
@@ -9,11 +9,9 @@ public class MediaView : AuditableEntity
     public int MediaItemId { get; set; }
     public MediaItem? MediaItem { get; set; }
 
-    /// <summary>Viewer's IP as the proxy reported it, shown on hover in the owner's log.</summary>
+    /// <summary>Viewer's IP as the proxy reported it. Location and provider are looked up from this
+    /// at display time (local databases), never stored.</summary>
     public string? Ip { get; set; }
-
-    /// <summary>ISO country code resolved from the IP in the background; null when private or unknown.</summary>
-    public string? Country { get; set; }
 }
 
 public class MediaViewConfiguration : AuditEntityConfiguration<MediaView>

@@ -17,6 +17,7 @@
         <PackageReference Include="Azure.Storage.Blobs" />
         <PackageReference Include="MailKit" />
         <PackageReference Include="Markdig" />
+        <PackageReference Include="MaxMind.GeoIP2" />
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

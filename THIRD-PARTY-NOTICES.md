@@ -11,6 +11,7 @@ image, redistributes — the following third-party components under their own li
 | Microsoft.AspNetCore.DataProtection.EntityFrameworkCore | MIT |
 | MetadataExtractor | Apache-2.0 |
 | MailKit / MimeKit | MIT |
+| MaxMind.GeoIP2 / MaxMind.Db | Apache-2.0 |
 | AWSSDK.S3 | Apache-2.0 |
 | Azure.Storage.Blobs | MIT |
 | Serilog.AspNetCore, Serilog.Sinks.Seq | Apache-2.0 |
@@ -21,6 +22,12 @@ image, redistributes — the following third-party components under their own li
 - **FFmpeg** — used for probing, thumbnails, and transcoding. Installed into the container image from the
   Debian package (LGPL-2.1-or-later / GPL-2.0-or-later components); invoked as a separate process, with no
   FFmpeg source included in this repository. See <https://ffmpeg.org/legal.html>.
+
+## Runtime-downloaded data
+
+- **DB-IP Lite** (IP to City and IP to ASN, <https://db-ip.com>): geolocation databases for the view
+  log, downloaded monthly at runtime and not redistributed in the container image. Licensed
+  CC BY 4.0; the view log page carries the required attribution link.
 
 ## Vendored front-end assets (`Boxy.Web/wwwroot/lib`)
 
