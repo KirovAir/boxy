@@ -327,9 +327,11 @@ public class MediaProcessingWorker(
         // The default lane is always H.264, whatever came in. An already-progressive H.264 mp4/m4v is
         // exactly that already, so it is served untouched - zero re-work, zero quality loss, at whatever
         // resolution it was uploaded at (the cap only ever applies to a file we are re-encoding anyway).
-        // Everything else (.mov, non-faststart mp4, .mkv/.webm, VP9/AV1, 10-bit, and now H.265) gets one.
-        var copyable = MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
-        var serveAsIs = copyable && IsProgressiveMp4(item.Extension, originalPath);
+        // Any other 8-bit H.264 (.mov, .mkv, moov at the end, PCM audio) is repackaged with the video
+        // copied, never re-encoded. Everything else (VP9/AV1, 10-bit, H.265) goes through the encoder.
+        var copyable = MediaProcessor.IsUniversalVideo(probe.VideoCodec, probe.PixFmt);
+        var serveAsIs = MediaProcessor.CanStreamCopyToMp4(probe.VideoCodec, probe.AudioCodec, probe.PixFmt)
+                        && IsProgressiveMp4(item.Extension, originalPath);
 
         // How the default lane got made, for the completion log below. Defaults suit the serve-as-is case:
         // no re-encode, and the served file keeps the source's own dimensions.
@@ -346,7 +348,11 @@ public class MediaProcessingWorker(
         {
             var settings = ConversionProfiles.Settings(item.Profile, videoCfg);
             var webName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
-            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, probe, expectedDuration, settings, ct, ReportConverting);
+            // Older builds sent 8-bit H.264 through the encoder just to fix its audio. Convert again should
+            // swap that encode for the copy, so don't reuse a file this item's own last run encoded. An
+            // owner's hand-in ("uploaded") lives under the same name and is still reused.
+            var reuse = !(copyable && item.WebEncoder is "cpu" or "gpu");
+            var produced = await ProduceWebFileAsync(originalPath, webName, copyable, reuse, probe, expectedDuration, settings, ct, ReportConverting);
             if (produced is null)
             {
                 // Never take a live, published video offline because a reprocess failed - leave it serving
@@ -487,13 +493,13 @@ public class MediaProcessingWorker(
     /// probe of what was produced, or null when nothing servable could be made.
     /// </summary>
     private async Task<WebProvenance?> ProduceWebFileAsync(string originalPath, string webName, bool copyable,
-        ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct,
+        bool reuse, ProbeResult probe, double? duration, VideoSettings settings, CancellationToken ct,
         Action<FfmpegProgress>? onProgress = null)
     {
         // Reuse a valid web file from an earlier run / another item with identical content. The codec set
         // is what makes this safe across the H.265 change: an -h264.mp4 that somehow isn't H.264 is
         // rejected here and rebuilt, rather than being trusted because the name looks right.
-        if (await storage.ExistsAsync(webName, ct))
+        if (reuse && await storage.ExistsAsync(webName, ct))
         {
             using var existing = await storage.GetLocalCopyAsync(webName, ct);
             if (existing is not null
@@ -506,10 +512,12 @@ public class MediaProcessingWorker(
         var scratch = ScratchOut(".mp4");
         try
         {
-            // Lossless remux when the source is already H.264 + AAC/MP3/none and only the container is
-            // wrong (a .mov, or an mp4 with its moov atom at the end).
+            // Remux when the source video is already 8-bit H.264 and only the container (a .mov, an mp4
+            // with its moov atom at the end) or the audio (camera PCM, AC-3) is wrong. The picture is
+            // copied bit for bit; re-encoding it to fix the sound would cost quality and an encode.
             if (copyable
-                && await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct, onProgress)
+                && await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct, onProgress,
+                    audioToAac: !MediaProcessor.AudioIsCopyable(probe.AudioCodec))
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.UniversalCodecs, ct) is { } remuxed)
             {
                 await storage.PutAsync(webName, scratch, ct);
@@ -552,7 +560,8 @@ public class MediaProcessingWorker(
     private async Task ProduceHqAsync(MediaItem item, ProbeResult probe, string originalPath, double? duration,
         string? previousHq, CancellationToken ct)
     {
-        var canKeep = MediaProcessor.CanKeepAsHq(probe.VideoCodec, probe.AudioCodec, probe.PixFmt);
+        var canKeep = MediaProcessor.IsHqVideo(probe.VideoCodec, probe.PixFmt);
+        var audioOk = MediaProcessor.AudioIsCopyable(probe.AudioCodec);
         var hqName = item.ContentHash + ConversionProfiles.HqSuffix;
 
         // A sidecar that was already IN FORCE wins over everything below, including the as-is shortcut:
@@ -566,8 +575,9 @@ public class MediaProcessingWorker(
             return;
         }
 
-        // The upload IS the rendition: already an mp4 that streams, already tagged the way Safari demands.
-        if (canKeep && IsProgressiveMp4(item.Extension, originalPath) && MediaProcessor.HevcCodecs(probe) is { } asIs)
+        // The upload IS the rendition: already an mp4 that streams, already tagged the way Safari demands,
+        // with sound a browser plays.
+        if (canKeep && audioOk && IsProgressiveMp4(item.Extension, originalPath) && MediaProcessor.HevcCodecs(probe) is { } asIs)
         {
             item.HqFileName = item.ContentHash + item.Extension;
             item.HqCodecs = asIs;
@@ -591,9 +601,10 @@ public class MediaProcessingWorker(
         var scratch = ScratchOut(".mp4");
         try
         {
-            // Stream-copy only. Re-encoding H.265 to H.265 would burn an hour to lose quality; if the copy
-            // won't go into an mp4, there is simply nothing better to offer than the H.264 file.
-            if (await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct)
+            // Stream-copy the video only (audio converted when a browser can't play it). Re-encoding H.265
+            // to H.265 would burn an hour to lose quality; if the copy won't go into an mp4, there is simply
+            // nothing better to offer than the H.264 file.
+            if (await processor.RemuxFastStartAsync(originalPath, scratch, probe.VideoCodec, ct, audioToAac: !audioOk)
                 && await processor.ValidateWebOutputAsync(scratch, duration, MediaProcessor.HqCodecSet, ct) is { } made
                 // Describe the file we are about to SERVE, not the one that came in: the remux forces the
                 // hvc1 tag, so this is the only probe whose answer is true of the bytes a browser will get.

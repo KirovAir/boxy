@@ -444,16 +444,20 @@ public class MediaProcessor(
             + $"-c:a aac -b:a 160k -ac 2 -movflags +faststart -f mp4 \"{output}\"";
     }
 
-    /// <summary>Remux (no re-encode) into a real mp4 container with the moov atom up front. Takes the
-    /// first video + first audio track only (drops timecode/data tracks that can break the mux).</summary>
+    /// <summary>Remux (no video re-encode) into a real mp4 container with the moov atom up front. Takes the
+    /// first video + first audio track only (drops timecode/data tracks that can break the mux). With
+    /// <paramref name="audioToAac"/> the audio is converted on the way, for a source whose picture is fine
+    /// but whose sound a browser can't play (camera PCM, AC-3); the video is still copied bit for bit.</summary>
     public async Task<bool> RemuxFastStartAsync(string input, string output, string? videoCodec = null,
-        CancellationToken ct = default, Action<FfmpegProgress>? onProgress = null)
+        CancellationToken ct = default, Action<FfmpegProgress>? onProgress = null, bool audioToAac = false)
     {
         var tmp = ScratchPath(output);
         // HEVC in mp4 must carry the hvc1 tag or Safari/QuickTime refuse it (some encoders write hev1).
         var tag = videoCodec == "hevc" ? "-tag:v hvc1 " : "";
+        // Same audio as the full transcode produces, so a copied lane sounds like an encoded one.
+        var codecs = audioToAac ? "-c:v copy -c:a aac -b:a 160k -ac 2 " : "-c copy ";
         var (code, _, err) = await RunAsync(FfmpegPath,
-            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:V:0 -map 0:a:0? -c copy {tag}-movflags +faststart -f mp4 \"{tmp}\"",
+            $"-nostdin -hide_banner -nostats -progress pipe:1 -loglevel error -y -i \"{input}\" -map 0:V:0 -map 0:a:0? {codecs}{tag}-movflags +faststart -f mp4 \"{tmp}\"",
             TranscodeTimeout, ct, onProgress);
         if (code != 0)
         {
@@ -647,30 +651,43 @@ public class MediaProcessor(
         return Is8BitYuv420(pixFmt) || pixFmt is "yuv420p10le";
     }
 
-    private static bool AudioIsCopyable(string? audioCodec)
+    /// <summary>AAC, MP3 or no audio at all: what every browser plays out of an mp4. Anything else (camera
+    /// PCM, AC-3, Opus) is converted to AAC on its way into a rendition, which costs seconds, not quality
+    /// that anyone watches for.</summary>
+    public static bool AudioIsCopyable(string? audioCodec)
     {
         return string.IsNullOrEmpty(audioCodec) || CopyableAudioCodecs.Contains(audioCodec);
     }
 
-    /// <summary>Codecs + pixel format an mp4 can hold AND every browser on every OS can decode with no
-    /// hardware help, so a lossless stream-copy remux is enough and no re-encode is needed. This is the
-    /// contract behind the file <c>/f/{slug}</c> serves, so it is deliberately the narrowest thing that
-    /// always works: H.264, 8-bit 4:2:0, with AAC/MP3 or no audio.</summary>
-    public static bool CanStreamCopyToMp4(string? videoCodec, string? audioCodec, string? pixFmt)
+    /// <summary>H.264 at 8-bit 4:2:0: the video stream every browser on every OS decodes with no hardware
+    /// help, so it is never re-encoded. Only its container, and at worst its audio, ever change.</summary>
+    public static bool IsUniversalVideo(string? videoCodec, string? pixFmt)
     {
-        return videoCodec is not null && CopyableVideoCodecs.Contains(videoCodec)
-                                      && Is8BitYuv420(pixFmt)
-                                      && AudioIsCopyable(audioCodec);
+        return videoCodec is not null && CopyableVideoCodecs.Contains(videoCodec) && Is8BitYuv420(pixFmt);
     }
 
-    /// <summary>True when the source is worth keeping whole as the better, pickier rendition offered
-    /// ahead of the H.264 copy: H.265 at 8- or 10-bit 4:2:0. Nothing is risked by offering it, because a
-    /// browser that can't decode it skips the source.</summary>
+    /// <summary>H.265 at 8- or 10-bit 4:2:0: worth keeping whole as the better, pickier rendition offered
+    /// ahead of the H.264 copy. Nothing is risked by offering it, because a browser that can't decode it
+    /// skips the source.</summary>
+    public static bool IsHqVideo(string? videoCodec, string? pixFmt)
+    {
+        return videoCodec is not null && HqVideoCodecs.Contains(videoCodec) && IsHqPixFmt(pixFmt);
+    }
+
+    /// <summary>Codecs + pixel format an mp4 can hold AND every browser on every OS can decode with no
+    /// hardware help, so the file can be served with nothing converted at all. This is the contract behind
+    /// the file <c>/f/{slug}</c> serves, so it is deliberately the narrowest thing that always works:
+    /// H.264, 8-bit 4:2:0, with AAC/MP3 or no audio.</summary>
+    public static bool CanStreamCopyToMp4(string? videoCodec, string? audioCodec, string? pixFmt)
+    {
+        return IsUniversalVideo(videoCodec, pixFmt) && AudioIsCopyable(audioCodec);
+    }
+
+    /// <summary>True when the source can be offered as the H.265 rendition exactly as it is, audio
+    /// included.</summary>
     public static bool CanKeepAsHq(string? videoCodec, string? audioCodec, string? pixFmt)
     {
-        return videoCodec is not null && HqVideoCodecs.Contains(videoCodec)
-                                      && IsHqPixFmt(pixFmt)
-                                      && AudioIsCopyable(audioCodec);
+        return IsHqVideo(videoCodec, pixFmt) && AudioIsCopyable(audioCodec);
     }
 
     /// <summary>True when the original file, as-is, is a browser-universal H.264 mp4-family file.</summary>
