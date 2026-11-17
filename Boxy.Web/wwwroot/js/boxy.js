@@ -3,9 +3,10 @@
 //   Boxy.confirm(message, opts) -> Promise<boolean>   a themed replacement for window.confirm
 //   Boxy.lightbox(slug, kind)                          preview an image/video in an overlay
 //
-// Plus two delegated handlers so markup stays declarative:
+// Plus delegated handlers so markup stays declarative:
 //   <form data-confirm="…">           asks before it submits
 //   <li data-lightbox data-slug data-kind>   opens a preview when the row (not a control) is clicked
+//   <div data-profile-help="selectId">       shows the [data-profile] block matching that select
 (function () {
     'use strict';
 
@@ -330,6 +331,17 @@
             });
         });
     }
+
+    // A conversion picker's help (_ConversionHelp) follows whatever option it is on.
+    document.addEventListener('change', function (e) {
+        if (!e.target.id) return;
+        var help = document.querySelector('[data-profile-help="' + e.target.id + '"]');
+        if (!help) return;
+        var value = e.target.value || help.getAttribute('data-profile-empty');
+        help.querySelectorAll('[data-profile]').forEach(function (block) {
+            block.hidden = block.getAttribute('data-profile') !== value;
+        });
+    });
 
     document.addEventListener('change', function (e) {
         var scope = e.target.closest('[data-bulk]');

@@ -848,6 +848,35 @@ a {
     min-width: 0;
 }
 
+/* Conversion picker help: what each kind of upload turns into under the chosen option */
+.conv-help {
+    max-width: 40rem;
+}
+
+.conv-outcomes {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 .5rem;
+}
+
+.conv-outcomes li {
+    margin-bottom: .15rem;
+}
+
+.conv-outcomes__src {
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.conv-outcomes__src::after {
+    content: ":";
+}
+
+.conv-tip {
+    border-left: 3px solid var(--kraft-line);
+    padding-left: .6rem;
+}
+
 /* Danger zone card - a quiet red tint so destructive actions read as separate */
 .card--danger {
     border-color: #e3b3ab;

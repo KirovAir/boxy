@@ -11,8 +11,9 @@
     <h2 class="h5 mb-0">Video</h2>
 </div>
 <p class="text-secondary small">
-    How Boxy re-encodes videos that browsers can't play as-is. Originals are never touched, and videos
-    already processed keep the version they have - these settings apply to new uploads.
+    How Boxy re-encodes videos that not every browser can play. Video that is already 8-bit H.264 is never
+    re-encoded, whatever is set here; only H.265 and other formats go through the encoder. Originals are never
+    touched, and videos already processed keep the version they have until you use Convert again.
     @if (!Model.FromDb)
     {
         <text>Currently using the built-in defaults - save to override them.</text>
@@ -33,10 +34,10 @@
             <div class="form-text mb-4">
                 The ceiling on the heaviest thing Boxy does, for a light server.
                 <span class="mono">Full</span> transcodes to H.264 as each profile below asks.
-                <span class="mono">Remux only</span> never re-encodes - it just stream-copies a <span class="mono">.mov</span>
+                <span class="mono">Remux only</span> never re-encodes: it just stream-copies a <span class="mono">.mov</span>
                 into an <span class="mono">.mp4</span> container (fast, no CPU), so an H.265 phone clip stays
-                H.265 and only plays inline in Safari. <span class="mono">Off</span> stores and serves exactly
-                what was uploaded. Remux and Off override every per-box and per-upload choice.
+                H.265 and only plays where the browser has an H.265 decoder. <span class="mono">Off</span> stores
+                and serves exactly what was uploaded. Remux and Off override every per-box and per-upload choice.
             </div>
 
             <div class="form-check form-switch mb-1">
@@ -69,12 +70,11 @@
                     <option value="@p" selected="@(p == Model.DefaultProfile)">@ConversionProfiles.Label(p)</option>
                 }
             </select>
+            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "defaultProfile", Selected = Model.DefaultProfile, ShowTip = false }'/>
             <div class="form-text mb-4">
-                What a video becomes when nobody picks anything else. <span class="mono">Best for every device</span>
-                makes two files out of an H.265 upload, so budget roughly three times the original on disk. On a
-                small server, set this to <span class="mono">Plays anywhere</span> and drop the encoding speed
-                below to <span class="mono">medium</span> - every phone video now goes through the encoder, where
-                an H.265 one used to be copied straight through in seconds.
+                What a video becomes when the uploader doesn't pick anything else. Boxes have their own default.
+                Every H.265 phone clip is a full encode under all three converting options, so on a small server
+                consider <span class="mono">medium</span> for the encoding speed below, or the GPU.
             </div>
 
             <label class="form-label" for="crf">Quality</label>
@@ -96,7 +96,8 @@
             </div>
             <div class="form-text mb-4">
                 The longer edge of a re-encoded video is capped at this. <span class="mono">1920</span> is 1080p.
-                Set <span class="mono">0</span> for no cap. Going above 1920 makes files much bigger, encoding
+                Set <span class="mono">0</span> for no cap. 8-bit H.264 uploads are never re-encoded, so they keep
+                their own size, and <span class="mono">Plays anywhere, full size</span> ignores the cap. Going above 1920 makes files much bigger, encoding
                 much slower (4K on a small server can take hours per clip), and can push the video past what
                 older phones and TVs will play.
             </div>
@@ -117,8 +118,8 @@
                     <text>
                         The CPU gives the best quality per byte and is slow: roughly real time for 1080p, and
                         several times that for 4K. The GPU is ten to thirty times faster and needs more bits for
-                        the same picture, so files come out bigger, or the same size and slightly softer. Now
-                        that every phone video goes through the encoder, that trade is usually worth it.
+                        the same picture, so files come out bigger, or the same size and slightly softer. With
+                        H.265 phone clips going through the encoder, that trade is usually worth it.
                         The quality number below means something different to each of them, so expect to
                         re-tune it if you switch. A hardware encode that fails falls back to the CPU on its own.
                     </text>

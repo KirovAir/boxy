@@ -247,11 +247,21 @@
                 }
                 @if (MediaKinds.Of(Model) == MediaKind.Video)
                 {
+                    // Whether the picture was actually re-encoded is the question people have, and a web file
+                    // existing doesn't answer it: a .mov repackaged into an .mp4 is one too.
+                    var playsAs = Model.WebEncoder switch
+                    {
+                        "gpu" or "cpu" => $"{Model.WebCodec}, re-encoded",
+                        "copied" => $"{Model.WebCodec}, repackaged without re-encoding",
+                        "uploaded" => $"{Model.WebCodec}, your own conversion",
+                        null when Model.WebFileName is null && Model.WebCodec is not null => $"{Model.WebCodec}, exactly as uploaded",
+                        _ => Model.WebCodec ?? "not processed yet"
+                    };
                     <dt>Format</dt>
-                    <dd>@Model.VideoCodec@(Model.AudioCodec is not null ? " / " + Model.AudioCodec : "")@(Model.WebFileName is not null ? " (converted for web)" : "")</dd>
+                    <dd>@Model.VideoCodec@(Model.AudioCodec is not null ? " / " + Model.AudioCodec : "")</dd>
                     <dt>Plays as</dt>
                     <dd>
-                        @(Model.WebCodec ?? "not processed yet")
+                        @playsAs
                         @if (Model.HqCodecs is not null)
                         {
                             <text>, with H.265 offered first where it plays</text>
@@ -285,7 +295,7 @@
                 {
                     "gpu" => "GPU (h264_vaapi)",
                     "cpu" => "CPU (libx264)",
-                    "copied" => "stream-copied, no re-encode",
+                    "copied" => "video stream-copied, no re-encode",
                     "reused" => "reused an earlier rendition",
                     "uploaded" => "your own upload, used as-is",
                     _ => "served exactly as uploaded"
@@ -337,6 +347,7 @@
                         </select>
                         <button type="submit" class="btn btn-sm btn-outline-primary">Convert</button>
                     </div>
+                    <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "convert", Selected = Model.Profile, ShowTip = false }'/>
                     <div class="form-text">Re-runs from the original, which is always kept. The share keeps playing
                         what it has until the new version is ready.
                     </div>

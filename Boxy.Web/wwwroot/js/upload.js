@@ -669,17 +669,6 @@
         return el && el.value ? '&profile=' + encodeURIComponent(el.value) : '';
     }
 
-    // Keep the help text on whatever is selected: each option costs something different in disk and in
-    // waiting, and that is the whole basis for choosing between them.
-    var profileSelect = form.querySelector('select[name=profile]');
-    var profileHelp = document.getElementById('profileHelp');
-    if (profileSelect && profileHelp) {
-        profileSelect.addEventListener('change', function () {
-            var opt = profileSelect.options[profileSelect.selectedIndex];
-            profileHelp.textContent = (opt && opt.getAttribute('data-help')) || '';
-        });
-    }
-
     // Ask the server to assemble the staged parts into the finished file.
     //
     // Concatenating and hashing a multi-GB file takes minutes, which is longer than a reverse proxy will

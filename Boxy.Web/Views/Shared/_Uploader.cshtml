@@ -31,12 +31,11 @@
             <select name="profile" id="profile" class="form-select mb-1" style="max-width: 24rem;">
                 @foreach (var p in ConversionProfiles.Choices)
                 {
-                    <option value="@p" selected="@(p == Model.DefaultProfile)"
-                            data-help="@ConversionProfiles.Help(p)">@ConversionProfiles.Label(p)</option>
+                    <option value="@p" selected="@(p == Model.DefaultProfile)">@ConversionProfiles.Label(p)</option>
                 }
             </select>
-            @* The cost of the option you are on stays in front of you, rather than being buried in docs. *@
-            <div class="form-text" id="profileHelp">@ConversionProfiles.Help(Model.DefaultProfile)</div>
+            @* What the option you are on does stays in front of you, rather than being buried in docs. *@
+            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "profile", Selected = Model.DefaultProfile }'/>
             <div class="form-text">Only videos are affected. Everything else is stored exactly as it came in.</div>
         </div>
     }

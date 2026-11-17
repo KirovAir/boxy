@@ -43,26 +43,87 @@ public static class ConversionProfiles
         };
     }
 
-    public static string Help(ConversionProfile profile)
+    /// <summary>One line on what the option costs, shown above <see cref="Outcomes"/>.</summary>
+    public static string Summary(ConversionProfile profile)
     {
         return profile switch
         {
             ConversionProfile.Best =>
-                "Devices that can decode it play your video untouched, H.265 and HDR and all. Everyone else "
-                + "gets an H.264 copy. Two files, so it takes the longest and uses the most disk. Nobody gets "
-                + "a black screen.",
+                "Plays for everyone, and devices that can show it get your H.265 as shot. Most disk: an "
+                + "H.265 upload ends up as two files.",
             ConversionProfile.Universal =>
-                "One H.264 file, up to the size set in Settings. Smallest and quickest, and everybody gets "
-                + "the same thing.",
+                "Everybody gets the same H.264 file. Smallest and quickest.",
             ConversionProfile.FullSize =>
-                "One H.264 file at the size you uploaded. For 4K and screen recordings, where the detail is "
-                + "the point. It will be big and it will take a while.",
+                "Like Plays anywhere, without shrinking. For 4K and screen recordings, where the detail is the "
+                + "point. Big files, slow on a small server.",
             ConversionProfile.AsUploaded =>
-                "Ships exactly the file you uploaded. Instant, and no extra disk. A viewer whose browser "
-                + "doesn't have the codec gets nothing to play, so pick this when you know who's watching.",
+                "Quickest and lightest: never an encode, at most a repackage into .mp4. Pick this when you know "
+                + "who's watching.",
             _ => ""
         };
     }
+
+    /// <summary>
+    /// What happens to each kind of upload under this profile, as (what you upload, what viewers get).
+    ///
+    /// This is the part people actually need: the profile only decides anything for video that isn't
+    /// 8-bit H.264 already, because that is never re-encoded (see <see cref="Services.MediaProcessor.IsUniversalVideo"/>).
+    /// Without saying so, "up to 1080p" reads as if a 4K H.264 upload gets shrunk, and it doesn't.
+    /// </summary>
+    public static IReadOnlyList<(string Upload, string Result)> Outcomes(ConversionProfile profile, int maxLongEdge)
+    {
+        const string asUploaded = "Your video as uploaded, at full size. Never re-encoded.";
+        var capped = $"Re-encoded to H.264, {CapText(maxLongEdge)}.";
+        return profile switch
+        {
+            ConversionProfile.Best =>
+            [
+                ("8-bit H.264", asUploaded),
+                ("H.265", "Devices that can play it get your original video, not re-encoded, HDR included. "
+                          + $"Everyone else gets an H.264 copy, re-encoded {CapText(maxLongEdge)}."),
+                ("Anything else", capped)
+            ],
+            ConversionProfile.Universal =>
+            [
+                ("8-bit H.264", asUploaded),
+                ("Anything else", capped + " Only that copy is played.")
+            ],
+            ConversionProfile.FullSize =>
+            [
+                ("8-bit H.264", asUploaded),
+                ("Anything else", "Re-encoded to H.264 at full size. Only that copy is played.")
+            ],
+            ConversionProfile.AsUploaded =>
+            [
+                ("Any video", "Your video as uploaded, nothing re-encoded. A browser that can't decode it "
+                              + "has nothing to play.")
+            ],
+            _ => []
+        };
+    }
+
+    /// <summary>The resolution cap as people say it: "up to 1080p", not "1920 px on the long edge".</summary>
+    public static string CapText(int maxLongEdge)
+    {
+        return maxLongEdge switch
+        {
+            <= 0 => "at full size",
+            1280 => "up to 720p",
+            1920 => "up to 1080p",
+            2560 => "up to 1440p",
+            3840 => "up to 4K",
+            _ => $"up to {maxLongEdge} px on the long side"
+        };
+    }
+
+    /// <summary>The answer to "what should I upload for the best result", shown under the upload
+    /// picker.</summary>
+    public const string BestQualityTip =
+        "For the best picture, upload 8-bit H.264 (an iPhone on Most Compatible records exactly that). It "
+        + "is never re-encoded, whichever option you pick; at most the container or the audio is converted "
+        + "(to .mp4 and AAC). "
+        + "Shot in H.265? Pick Best for every device, or encode an H.264 copy yourself and hand it in on the "
+        + "file's page under Upload your own conversion.";
 
     /// <summary>Read a profile off the wire. Anything unrecognised - a typo, a stale form, a hand-crafted
     /// query string on an endpoint that takes no antiforgery token - is null, and the caller falls back to
