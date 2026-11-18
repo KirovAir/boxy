@@ -1260,12 +1260,12 @@ public class DashboardController(
             // probe, validate and stream-copy work: it adopts the file stored here, never re-encodes.
             if (!ConversionProfiles.Transcodes(item.Profile))
             {
-                // The backfill below runs under the global conversion ceiling; with Remux/Off it would
+                // The backfill below runs under the global conversion ceiling; with Remux it would
                 // collapse the profile straight back to as-uploaded and never adopt this file. Refuse up
                 // front instead of storing a rendition nothing will ever reference.
                 if ((await videoSettings.GetEffectiveAsync(ct)).ConversionMode != ConversionMode.Full)
                 {
-                    this.FlashError("The server-wide conversion mode doesn't build web versions right now, so a handed-in one would never be used. Switch video settings to full conversion first.");
+                    this.FlashError("This server is set to never re-encode, so a handed-in web version would never be used. Turn that off in Settings, Video first.");
                     return RedirectToAction(nameof(Edit), new { id });
                 }
 

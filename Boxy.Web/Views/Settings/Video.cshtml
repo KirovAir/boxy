@@ -11,9 +11,9 @@
     <h2 class="h5 mb-0">Video</h2>
 </div>
 <p class="text-secondary small">
-    How Boxy re-encodes videos that not every browser can play. Video that is already 8-bit H.264 is never
-    re-encoded, whatever is set here; only H.265 and other formats go through the encoder. Originals are never
-    touched, and videos already processed keep the version they have until you use Convert again.
+    How Boxy handles videos that not every browser can play. Video that is already 8-bit H.264 is never
+    re-encoded, only repackaged where needed; H.265 and other formats go through the encoder. Originals are
+    never touched, and videos already processed keep what they have until you use Convert again.
     @if (!Model.FromDb)
     {
         <text>Currently using the built-in defaults - save to override them.</text>
@@ -25,19 +25,14 @@
         <form method="post" action="/settings/video">
             @Html.AntiForgeryToken()
 
-            <label class="form-label" for="conversionMode">Conversions</label>
-            <select name="conversionMode" id="conversionMode" class="form-select mb-1" style="max-width: 24rem;">
-                <option value="@ConversionMode.Full" selected="@(Model.ConversionMode == ConversionMode.Full)">Full conversions</option>
-                <option value="@ConversionMode.Remux" selected="@(Model.ConversionMode == ConversionMode.Remux)">Remux only (no re-encode)</option>
-                <option value="@ConversionMode.Off" selected="@(Model.ConversionMode == ConversionMode.Off)">Off (store originals as-is)</option>
-            </select>
+            <div class="form-check form-switch mb-1">
+                <input type="checkbox" name="neverReencode" value="true" class="form-check-input" id="neverReencode"
+                       role="switch" @(Model.ConversionMode != ConversionMode.Full ? "checked" : "")/>
+                <label class="form-check-label" for="neverReencode">Never re-encode videos</label>
+            </div>
             <div class="form-text mb-4">
-                The ceiling on the heaviest thing Boxy does, for a light server.
-                <span class="mono">Full</span> transcodes to H.264 as each profile below asks.
-                <span class="mono">Remux only</span> never re-encodes: it just stream-copies a <span class="mono">.mov</span>
-                into an <span class="mono">.mp4</span> container (fast, no CPU), so an H.265 phone clip stays
-                H.265 and only plays where the browser has an H.265 decoder. <span class="mono">Off</span> stores
-                and serves exactly what was uploaded. Remux and Off override every per-box and per-upload choice.
+                For a light server. Every video is repackaged only, whatever the uploader or the box picked, so
+                an H.265 phone clip stays H.265 and only plays where the browser can decode it.
             </div>
 
             <div class="form-check form-switch mb-1">
@@ -47,7 +42,7 @@
             </div>
             <div class="form-text mb-4">
                 Poster frames for videos and thumbnails for photos (including iPhone HEIC) - a quick
-                single-frame ffmpeg grab, independent of the conversion setting above. Turn off to avoid every
+                single-frame ffmpeg grab, independent of the setting above. Turn off to avoid every
                 ffmpeg call on a minimal server; the gallery then falls back to a file-type icon.
             </div>
 
@@ -57,7 +52,7 @@
                 <label class="form-check-label" for="hls">Package for iPhone and Safari (HLS)</label>
             </div>
             <div class="form-text mb-4">
-                Repackages each converted video into the streaming form Safari handles best, so playback and
+                Repackages each video into the streaming form Safari handles best, so playback and
                 scrubbing stay smooth on iPhones even over slow connections. No re-encode and no quality loss,
                 but it roughly doubles the disk a video's converted files take. Applies from the next
                 conversion; use Convert again on an existing video to add it.
@@ -70,11 +65,12 @@
                     <option value="@p" selected="@(p == Model.DefaultProfile)">@ConversionProfiles.Label(p)</option>
                 }
             </select>
-            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "defaultProfile", Selected = Model.DefaultProfile, ShowTip = false }'/>
+            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "defaultProfile", Selected = Model.DefaultProfile }'/>
             <div class="form-text mb-4">
                 What a video becomes when the uploader doesn't pick anything else. Boxes have their own default.
-                Every H.265 phone clip is a full encode under all three converting options, so on a small server
-                consider <span class="mono">medium</span> for the encoding speed below, or the GPU.
+                Converting an H.265 phone clip is
+                a full encode, so on a small server consider <span class="mono">medium</span> for the encoding
+                speed below, or the GPU.
             </div>
 
             <label class="form-label" for="crf">Quality</label>
@@ -97,8 +93,8 @@
             <div class="form-text mb-4">
                 The longer edge of a re-encoded video is capped at this. <span class="mono">1920</span> is 1080p.
                 Set <span class="mono">0</span> for no cap. 8-bit H.264 uploads are never re-encoded, so they keep
-                their own size, and <span class="mono">Plays anywhere, full size</span> ignores the cap. Going above 1920 makes files much bigger, encoding
-                much slower (4K on a small server can take hours per clip), and can push the video past what
+                their own size, and devices that play H.265 get the original at full size. Going above 1920 makes
+                files much bigger, encoding much slower (4K on a small server can take hours per clip), and can push the video past what
                 older phones and TVs will play.
             </div>
 

@@ -26,104 +26,43 @@ public static class ConversionProfiles
     public const ConversionProfile BoxFallback = ConversionProfile.AsUploaded;
 
     /// <summary>The picker, in the order it is offered. Best first: it is the default and the safe answer.</summary>
-    public static readonly ConversionProfile[] Choices =
-    [
-        ConversionProfile.Best, ConversionProfile.Universal, ConversionProfile.FullSize, ConversionProfile.AsUploaded
-    ];
+    public static readonly ConversionProfile[] Choices = [ConversionProfile.Best, ConversionProfile.AsUploaded];
+
+    /// <summary>Every profile an item can be on. Universal and FullSize are no longer offered, but items
+    /// converted under them keep their files, and the cleanups must still know those names.</summary>
+    public static readonly ConversionProfile[] All = Enum.GetValues<ConversionProfile>();
 
     public static string Label(ConversionProfile profile)
     {
         return profile switch
         {
-            ConversionProfile.Best => "Best for every device",
-            ConversionProfile.Universal => "Plays anywhere",
-            ConversionProfile.FullSize => "Plays anywhere, full size",
-            ConversionProfile.AsUploaded => "Don't convert it",
+            ConversionProfile.Best => "Convert when needed",
+            ConversionProfile.AsUploaded => "Repackage only",
+            ConversionProfile.Universal => "Plays anywhere (no longer offered)",
+            ConversionProfile.FullSize => "Plays anywhere, full size (no longer offered)",
             _ => profile.ToString()
         };
     }
 
-    /// <summary>One line on what the option costs, shown above <see cref="Outcomes"/>.</summary>
+    /// <summary>One line under the picker on what the option means for the viewer.</summary>
     public static string Summary(ConversionProfile profile)
     {
         return profile switch
         {
             ConversionProfile.Best =>
-                "Plays for everyone, and devices that can show it get your H.265 as shot. Most disk: an "
-                + "H.265 upload ends up as two files.",
-            ConversionProfile.Universal =>
-                "Everybody gets the same H.264 file. Smallest and quickest.",
-            ConversionProfile.FullSize =>
-                "Like Plays anywhere, without shrinking. For 4K and screen recordings, where the detail is the "
-                + "point. Big files, slow on a small server.",
+                "Plays in every browser. Videos that need it get an extra H.264 copy; your original stays as it is.",
             ConversionProfile.AsUploaded =>
-                "Quickest and lightest: never an encode, at most a repackage into .mp4. Pick this when you know "
-                + "who's watching.",
+                "Never re-encoded, so it's quick. H.265 and rarer formats won't play in every browser.",
             _ => ""
         };
     }
 
-    /// <summary>
-    /// What happens to each kind of upload under this profile, as (what you upload, what viewers get).
-    ///
-    /// This is the part people actually need: the profile only decides anything for video that isn't
-    /// 8-bit H.264 already, because that is never re-encoded (see <see cref="Services.MediaProcessor.IsUniversalVideo"/>).
-    /// Without saying so, "up to 1080p" reads as if a 4K H.264 upload gets shrunk, and it doesn't.
-    /// </summary>
-    public static IReadOnlyList<(string Upload, string Result)> Outcomes(ConversionProfile profile, int maxLongEdge)
+    /// <summary>The same profile, or the one that replaces it when it is no longer offered. For defaults,
+    /// which decide what NEW uploads become.</summary>
+    public static ConversionProfile Current(ConversionProfile profile)
     {
-        const string asUploaded = "Your video as uploaded, at full size. Never re-encoded.";
-        var capped = $"Re-encoded to H.264, {CapText(maxLongEdge)}.";
-        return profile switch
-        {
-            ConversionProfile.Best =>
-            [
-                ("8-bit H.264", asUploaded),
-                ("H.265", "Devices that can play it get your original video, not re-encoded, HDR included. "
-                          + $"Everyone else gets an H.264 copy, re-encoded {CapText(maxLongEdge)}."),
-                ("Anything else", capped)
-            ],
-            ConversionProfile.Universal =>
-            [
-                ("8-bit H.264", asUploaded),
-                ("Anything else", capped + " Only that copy is played.")
-            ],
-            ConversionProfile.FullSize =>
-            [
-                ("8-bit H.264", asUploaded),
-                ("Anything else", "Re-encoded to H.264 at full size. Only that copy is played.")
-            ],
-            ConversionProfile.AsUploaded =>
-            [
-                ("Any video", "Your video as uploaded, nothing re-encoded. A browser that can't decode it "
-                              + "has nothing to play.")
-            ],
-            _ => []
-        };
+        return Choices.Contains(profile) ? profile : Fallback;
     }
-
-    /// <summary>The resolution cap as people say it: "up to 1080p", not "1920 px on the long edge".</summary>
-    public static string CapText(int maxLongEdge)
-    {
-        return maxLongEdge switch
-        {
-            <= 0 => "at full size",
-            1280 => "up to 720p",
-            1920 => "up to 1080p",
-            2560 => "up to 1440p",
-            3840 => "up to 4K",
-            _ => $"up to {maxLongEdge} px on the long side"
-        };
-    }
-
-    /// <summary>The answer to "what should I upload for the best result", shown under the upload
-    /// picker.</summary>
-    public const string BestQualityTip =
-        "For the best picture, upload 8-bit H.264 (an iPhone on Most Compatible records exactly that). It "
-        + "is never re-encoded, whichever option you pick; at most the container or the audio is converted "
-        + "(to .mp4 and AAC). "
-        + "Shot in H.265? Pick Best for every device, or encode an H.264 copy yourself and hand it in on the "
-        + "file's page under Upload your own conversion.";
 
     /// <summary>Read a profile off the wire. Anything unrecognised - a typo, a stale form, a hand-crafted
     /// query string on an endpoint that takes no antiforgery token - is null, and the caller falls back to
@@ -131,7 +70,7 @@ public static class ConversionProfiles
     /// undefined member.</summary>
     public static ConversionProfile? Parse(string? value)
     {
-        return Enum.TryParse<ConversionProfile>(value, true, out var parsed) && Enum.IsDefined(parsed)
+        return Enum.TryParse<ConversionProfile>(value, true, out var parsed) && Choices.Contains(parsed)
             ? parsed
             : null;
     }
@@ -140,15 +79,13 @@ public static class ConversionProfiles
     /// the instance default. One chain, so no caller invents its own.</summary>
     public static ConversionProfile Resolve(ConversionProfile? chosen, ConversionProfile? boxDefault, ConversionProfile instanceDefault)
     {
-        return chosen ?? boxDefault ?? instanceDefault;
+        return Current(chosen ?? boxDefault ?? instanceDefault);
     }
 
     /// <summary>The profile actually used once the global <see cref="ConversionMode"/> ceiling is applied.
-    /// Full honours it; Remux and Off both cap any transcoding profile down to
-    /// <see cref="ConversionProfile.AsUploaded"/> - the difference between them is only whether the worker
-    /// then remuxes or serves the original, which it decides from the mode. Collapsing both onto one profile
-    /// is what keeps <see cref="NeedsReprocessing"/> valid: an AsUploaded item that serves its own original
-    /// (no derived web file) is already a terminal state the heal accepts.</summary>
+    /// Full honours it; Remux caps any transcoding profile down to <see cref="ConversionProfile.AsUploaded"/>.
+    /// Persisting that is what keeps <see cref="NeedsReprocessing"/> valid: an AsUploaded item is already
+    /// a terminal state the heal accepts.</summary>
     public static ConversionProfile UnderMode(ConversionProfile profile, ConversionMode mode)
     {
         return mode == ConversionMode.Full ? profile : ConversionProfile.AsUploaded;
@@ -222,15 +159,15 @@ public static class ConversionProfiles
     public const string HlsHqVariant = "hevc";
 
     /// <summary>The storage stem of a variant's HLS pair: the web variant follows its lane
-    /// (<c>-h264</c> / <c>-h264-full</c>), the H.265 one has a single lane like its mp4 sidecar.</summary>
+    /// (<c>-h264</c> / <c>-h264-full</c> / <c>-asis</c>), the H.265 one has a single lane like its mp4 sidecar.</summary>
     public static string HlsStem(string variant, ConversionProfile profile)
     {
         return variant == HlsWebVariant ? WebSuffix(profile)[..^".mp4".Length] : "-" + HlsHqVariant;
     }
 
-    /// <summary>Every web-lane stem a transcoding profile can produce - what the cleanups sweep.</summary>
+    /// <summary>Every web-lane stem any profile can produce, which is what the cleanups sweep.</summary>
     public static readonly string[] HlsWebStems =
-        Choices.Where(Transcodes).Select(p => HlsStem(HlsWebVariant, p)).Distinct().ToArray();
+        All.Select(p => HlsStem(HlsWebVariant, p)).Distinct().ToArray();
 
     public static string HlsPlaylistName(string contentHash, string stem)
     {
@@ -251,7 +188,8 @@ public static class ConversionProfiles
 
     private static readonly string[] RenditionSuffixes =
         ["-h264.mp4", "-h264-full.mp4", "-asis.mp4", HqSuffix, LegacyWebSuffix,
-         "-h264.m4s", "-h264.m3u8", "-h264-full.m4s", "-h264-full.m3u8", "-hevc.m4s", "-hevc.m3u8"];
+         "-h264.m4s", "-h264.m3u8", "-h264-full.m4s", "-h264-full.m3u8", "-asis.m4s", "-asis.m3u8",
+         "-hevc.m4s", "-hevc.m3u8"];
 
     /// <summary>What an item currently has on disk, against what its profile says it should have. Just
     /// enough columns to answer <see cref="NeedsReprocessing"/> without loading whole entities.</summary>

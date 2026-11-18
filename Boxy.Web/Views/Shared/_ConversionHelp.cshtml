@@ -1,33 +1,20 @@
 @model ConversionHelpVm
 @inject Boxy.Web.Services.VideoSettingsProvider VideoSettings
-@* What each conversion option does to each kind of upload. Every option is rendered and boxy.js shows
-   the one the select is on, so the explanation follows the choice without a round trip. *@
+@* One line on the option the select is on. Every option is rendered and boxy.js shows the matching one. *@
 @{
     var settings = await VideoSettings.GetEffectiveAsync();
-    var cap = settings.MaxLongEdge;
 }
 <div class="form-text conv-help" data-profile-help="@Model.SelectId"
      data-profile-empty="@Model.EmptyMeans">
     @if (settings.ConversionMode != ConversionMode.Full)
     {
-        @* UnderMode clamps every profile to as-uploaded here, so the per-option lines below would lie. *@
-        <div class="conv-tip mb-2">Conversions are @(settings.ConversionMode == ConversionMode.Off ? "off" : "limited to remuxing")
-            on this server (Settings, Video), so for now every video is kept as uploaded, whatever you pick.</div>
+        <div>This server never re-encodes (Settings, Video), so every video is repackaged only.</div>
     }
-    @foreach (var p in ConversionProfiles.Choices)
+    else
     {
-        <div data-profile="@p" hidden="@(p != Model.Selected)">
-            <div class="mb-1">@ConversionProfiles.Summary(p)</div>
-            <ul class="conv-outcomes">
-                @foreach (var (upload, result) in ConversionProfiles.Outcomes(p, cap))
-                {
-                    <li><span class="conv-outcomes__src">@upload</span> @result</li>
-                }
-            </ul>
-        </div>
-    }
-    @if (Model.ShowTip)
-    {
-        <div class="conv-tip">@ConversionProfiles.BestQualityTip</div>
+        @foreach (var p in ConversionProfiles.Choices)
+        {
+            <div data-profile="@p" hidden="@(p != Model.Selected)">@ConversionProfiles.Summary(p)</div>
+        }
     }
 </div>

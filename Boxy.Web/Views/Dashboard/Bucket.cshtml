@@ -112,12 +112,12 @@
                     <option value="@p" selected="@(p == Model.Bucket.DefaultProfile)">@ConversionProfiles.Label(p)</option>
                 }
             </select>
-            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "boxprofile", Selected = Model.Bucket.DefaultProfile ?? ConversionProfiles.BoxFallback, EmptyMeans = ConversionProfiles.BoxFallback, ShowTip = false }'/>
+            <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "boxprofile", Selected = Model.Bucket.DefaultProfile ?? ConversionProfiles.BoxFallback, EmptyMeans = ConversionProfiles.BoxFallback }'/>
             <div class="form-text mb-3">
                 Nothing dropped in a box is ever a public share, so
-                <span class="mono">@ConversionProfiles.Label(ConversionProfile.AsUploaded)</span> costs nothing and
-                finishes instantly. Pick <span class="mono">@ConversionProfiles.Label(ConversionProfile.Universal)</span>
-                if you preview these on a machine with no H.265 decoder.
+                <span class="mono">@ConversionProfiles.Label(ConversionProfile.AsUploaded)</span> is usually enough.
+                Pick <span class="mono">@ConversionProfiles.Label(ConversionProfile.Best)</span> if you preview these
+                on a machine with no H.265 decoder.
             </div>
 
             <button type="submit" class="btn btn-sm btn-primary">Save</button>

@@ -9,5 +9,4 @@ public class ConversionHelpVm
     public required string SelectId { get; init; }
     public required ConversionProfile Selected { get; init; }
     public ConversionProfile? EmptyMeans { get; init; }
-    public bool ShowTip { get; init; } = true;
 }

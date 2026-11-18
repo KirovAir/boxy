@@ -213,7 +213,7 @@ public class MediaLogicTests
         // Blob names are content-addressed, so two uploads of the same bytes under different profiles land
         // on the same stem. If the lanes shared a suffix they would overwrite each other's output, and a
         // "don't convert it" upload would silently serve someone else's H.264 transcode.
-        var names = ConversionProfiles.Choices.Select(ConversionProfiles.WebSuffix).ToList();
+        var names = ConversionProfiles.All.Select(ConversionProfiles.WebSuffix).ToList();
         Assert.AreEqual(ConversionProfiles.WebSuffix(ConversionProfile.Best),
             ConversionProfiles.WebSuffix(ConversionProfile.Universal),
             "Best and Universal produce the same capped H.264 file, so they may share it.");
@@ -239,6 +239,7 @@ public class MediaLogicTests
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-h264.m3u8"));
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.m4s"));
         Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-hevc.m3u8"));
+        Assert.IsTrue(ConversionProfiles.IsDerivedRendition("abc123-asis.m4s"));
 
         // The load-bearing case: HqFileName points at the ORIGINAL when the upload is already a faststart
         // hvc1 mp4. Cleaning up a stale rendition must never treat that as its own file to delete - after a
@@ -317,6 +318,19 @@ public class MediaLogicTests
         var universal = ConversionProfiles.Settings(ConversionProfile.Universal, global);
         Assert.AreEqual(VideoEncoder.Hardware, universal.Encoder);
         Assert.AreEqual(1920, universal.MaxLongEdge);
+    }
+
+    [TestMethod]
+    public void RetiredSettingsReadAsTheirReplacement()
+    {
+        // A server set to Off must not wake up encoding everything, and a stored default that is no longer
+        // offered must not keep producing it.
+        var stored = new VideoSettings { ConversionMode = ConversionMode.Off, DefaultProfile = ConversionProfile.FullSize };
+        Assert.AreEqual(ConversionMode.Remux, stored.Normalized().ConversionMode);
+        Assert.AreEqual(ConversionProfile.Best, stored.Normalized().DefaultProfile);
+
+        Assert.IsNull(ConversionProfiles.Parse("Universal"));
+        Assert.AreEqual(ConversionProfile.Best, ConversionProfiles.Resolve(null, ConversionProfile.Universal, ConversionProfile.AsUploaded));
     }
 
     private static bool Needs(ConversionProfile profile, string? videoCodec, string? web, string? webCodec, string? hq,

@@ -340,6 +340,10 @@
                     <label class="form-label small mb-1" for="convert">Convert again</label>
                     <div class="d-flex gap-2 flex-wrap">
                         <select name="profile" id="convert" class="form-select form-select-sm" style="max-width: 20rem;">
+                            @if (!ConversionProfiles.Choices.Contains(Model.Profile))
+                            {
+                                <option value="" selected disabled>@ConversionProfiles.Label(Model.Profile)</option>
+                            }
                             @foreach (var p in ConversionProfiles.Choices)
                             {
                                 <option value="@p" selected="@(p == Model.Profile)">@ConversionProfiles.Label(p)</option>
@@ -347,7 +351,7 @@
                         </select>
                         <button type="submit" class="btn btn-sm btn-outline-primary">Convert</button>
                     </div>
-                    <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "convert", Selected = Model.Profile, ShowTip = false }'/>
+                    <partial name="_ConversionHelp" model='new ConversionHelpVm { SelectId = "convert", Selected = Model.Profile }'/>
                     <div class="form-text">Re-runs from the original, which is always kept. The share keeps playing
                         what it has until the new version is ready.
                     </div>
@@ -370,7 +374,7 @@
                             <button type="submit" class="btn btn-sm btn-outline-primary">Upload web version</button>
                             <div class="form-text">@(ConversionProfiles.Transcodes(Model.Profile)
                                                       ? "Converted it yourself on a faster machine? Upload it here and it replaces the web copy without any server conversion."
-                                                      : "This video is served exactly as uploaded. Add your own H.264 and browsers that can't play the original get it instead - the original stays offered first, and nothing is re-encoded here.")
+                                                      : "This video isn't re-encoded. Add your own H.264 and browsers that can't play the original get it instead; the original stays offered first, and nothing is re-encoded here.")
                                 H.264 with AAC audio, and it must be the same video. The original stays untouched.
                             </div>
                         </form>

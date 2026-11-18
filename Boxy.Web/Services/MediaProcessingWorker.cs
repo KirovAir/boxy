@@ -284,23 +284,21 @@ public class MediaProcessingWorker(
         item.WebFileName = item.WebCodec = item.HqFileName = item.HqCodecs = null;
         item.HlsCodecs = item.HlsHqCodecs = item.HlsWebStem = null;
 
-        // "Don't convert it": ship exactly what was uploaded. Serve an already-faststart mp4 as-is, else
-        // stream-copy the source into a faststart mp4 so it at least streams (codec untouched); if even
-        // that fails, serve the raw original. Never transcode - the uploader opted to own compatibility.
+        // "Repackage only": never re-encode the picture. An already-progressive mp4 with sound a browser plays
+        // is served as-is; anything else is stream-copied into a faststart mp4, with the audio converted to
+        // AAC where it needs it (camera PCM, AC-3). If even that fails, serve the raw original.
         if (item.Profile == ConversionProfile.AsUploaded)
         {
-            // Off serves the original untouched - not even a remux. Remux/Full still stream-copy a container
-            // that needs it (a .mov) into a faststart mp4, codec never re-encoded.
             var keptName = item.ContentHash + ConversionProfiles.WebSuffix(item.Profile);
-            if (videoCfg.ConversionMode != ConversionMode.Off
-                && !IsProgressiveMp4(item.Extension, originalPath)
-                && await ProduceKeptOriginalAsync(originalPath, keptName, probe.VideoCodec, ct, ReportConverting))
+            var audioOk = MediaProcessor.AudioIsCopyable(probe.AudioCodec);
+            if ((!audioOk || !IsProgressiveMp4(item.Extension, originalPath))
+                && await ProduceKeptOriginalAsync(originalPath, keptName, probe, expectedDuration, ct, ReportConverting))
             {
                 item.WebFileName = keptName;
             }
 
             // Either way the codec is the source's: that is the whole point of this profile. When the remux
-            // fails we serve the raw original, which for "don't convert it" IS the promise - do not resurrect
+            // fails we serve the raw original, which for "repackage only" IS the promise. Do not resurrect
             // a prior web file to keep it "faststart". A prior -asis.mp4 is already reused by
             // ProduceKeptOriginalAsync above, so it never reaches here; anything else on the stem is a file
             // from a transcoding profile, and you cannot prove from metadata that an h264/same-size/same-pixfmt
@@ -316,6 +314,13 @@ public class MediaProcessingWorker(
             item.EncodePreset = null;
             item.SourceIsHdr = probe.IsHdr;
             item.EncodeToneMapped = false;
+
+            // Lossless, so Safari gets its smooth scrubbing here too. Only H.264 has a variant to ride in.
+            if (videoCfg.EnableHls && item.WebCodec == "h264")
+            {
+                await ProduceHlsAsync(item, expectedDuration, ct);
+            }
+
             item.EncodeMs = (int)sw.Elapsed.TotalMilliseconds;
             await FinishAsync(db, item, previous.WebFileName, previous.HqFileName, ct);
             logger.LogInformation("Kept {Slug} as uploaded in {Seconds:0.0}s: {Codec} {Size} (remuxed={Remuxed})",
@@ -748,18 +753,22 @@ public class MediaProcessingWorker(
     }
 
     /// <summary>
-    /// For a "keep original" upload: make the source streamable without re-encoding. Produces (or
-    /// reuses) a faststart mp4 by stream-copy, codec untouched. Returns false when even the remux
-    /// fails, so the caller serves the raw original. No codec restriction; the uploader owns playback.
+    /// For a "repackage only" upload: make the source streamable without re-encoding the picture. Produces
+    /// (or reuses) a faststart mp4 by stream-copy, with the audio converted to AAC when a browser can't play
+    /// it. Returns false when even the remux fails, so the caller serves the raw original. No video codec
+    /// restriction; the uploader owns that.
     /// </summary>
-    private async Task<bool> ProduceKeptOriginalAsync(string originalPath, string webName, string? videoCodec,
-        CancellationToken ct, Action<FfmpegProgress>? onProgress = null)
+    private async Task<bool> ProduceKeptOriginalAsync(string originalPath, string webName, ProbeResult source,
+        double? duration, CancellationToken ct, Action<FfmpegProgress>? onProgress = null)
     {
-        // Reuse a valid faststart mp4 from an earlier run / another item with identical content.
+        // Reuse a valid faststart mp4 from an earlier run / another item with identical content, unless it
+        // predates the audio fix and still carries sound a browser can't play.
         if (await storage.ExistsAsync(webName, ct))
         {
             using var existing = await storage.GetLocalCopyAsync(webName, ct);
-            if (existing is not null && MediaProcessor.IsFastStartMp4(existing.Path))
+            if (existing is not null
+                && await processor.ValidateWebOutputAsync(existing.Path, duration, null, ct) is { } kept
+                && MediaProcessor.AudioIsCopyable(kept.AudioCodec))
             {
                 return true;
             }
@@ -768,8 +777,9 @@ public class MediaProcessingWorker(
         var scratch = ScratchOut(".mp4");
         try
         {
-            if (await processor.RemuxFastStartAsync(originalPath, scratch, videoCodec, ct, onProgress)
-                && MediaProcessor.IsFastStartMp4(scratch))
+            if (await processor.RemuxFastStartAsync(originalPath, scratch, source.VideoCodec, ct, onProgress,
+                    audioToAac: !MediaProcessor.AudioIsCopyable(source.AudioCodec))
+                && await processor.ValidateWebOutputAsync(scratch, duration, null, ct) is not null)
             {
                 await storage.PutAsync(webName, scratch, ct);
                 return true;

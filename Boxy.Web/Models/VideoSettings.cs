@@ -28,13 +28,13 @@ public enum ConversionMode
     /// <summary>Full conversions: transcode to H.264 as each profile asks. The default.</summary>
     Full,
 
-    /// <summary>Remux only: never re-encode. Stream-copies an upload into a faststart mp4 where the container
-    /// needs it (a .mov into an .mp4), codec untouched - cheap, no CPU. Caps heavier profiles down to this,
-    /// so an H.265 phone clip stays H.265 and only Safari plays it inline.</summary>
+    /// <summary>Never re-encode: every profile is capped to <see cref="ConversionProfile.AsUploaded"/>, which
+    /// still repackages the container and converts the audio where a browser needs it. Cheap, no encode,
+    /// and an H.265 phone clip stays H.265.</summary>
     Remux,
 
-    /// <summary>Off: store and serve originals exactly as uploaded - no transcode, no remux. Lightest; a
-    /// viewer whose browser lacks the codec gets nothing to play.</summary>
+    /// <summary>Retired: served the raw upload without even a repackage, so a .mov didn't play in Chrome or
+    /// Firefox. A stored Off reads as <see cref="Remux"/>.</summary>
     Off
 }
 
@@ -75,12 +75,12 @@ public class VideoSettings
     public VideoEncoder Encoder { get; set; } = VideoEncoder.Software;
 
     /// <summary>The global ceiling on conversion work (see <see cref="ConversionMode"/>). Full by default;
-    /// Remux and Off cap every upload's profile down, whatever the box or the uploader asked for.</summary>
+    /// Remux caps every upload's profile down, whatever the box or the uploader asked for.</summary>
     public ConversionMode ConversionMode { get; set; } = ConversionMode.Full;
 
     /// <summary>Whether to generate poster frames and image thumbnails at all. On by default, and independent
-    /// of <see cref="ConversionMode"/>: a light server can keep cheap posters while switching transcoding
-    /// off, or drop posters too to avoid every ffmpeg call.</summary>
+    /// of <see cref="ConversionMode"/>: a light server can keep cheap posters while never re-encoding, or
+    /// drop posters too to save the ffmpeg call.</summary>
     public bool GeneratePosters { get; set; } = true;
 
     /// <summary>Whether to also package each converted video as HLS, which is what makes playback and
@@ -112,9 +112,14 @@ public class VideoSettings
             Preset = preset is not null && AllowedPresets.Contains(preset) ? preset : "slow",
             // A JSON blob is easy to hand-edit and a form is easy to forge: an undefined enum member would
             // otherwise fall through every switch in the worker and quietly transcode nothing.
-            DefaultProfile = Enum.IsDefined(DefaultProfile) ? DefaultProfile : ConversionProfiles.Fallback,
+            DefaultProfile = ConversionProfiles.Current(DefaultProfile),
             Encoder = Enum.IsDefined(Encoder) ? Encoder : VideoEncoder.Software,
-            ConversionMode = Enum.IsDefined(ConversionMode) ? ConversionMode : ConversionMode.Full,
+            ConversionMode = ConversionMode switch
+            {
+                ConversionMode.Off => ConversionMode.Remux,
+                _ when Enum.IsDefined(ConversionMode) => ConversionMode,
+                _ => ConversionMode.Full
+            },
             GeneratePosters = GeneratePosters,
             EnableHls = EnableHls
         };

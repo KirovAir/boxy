@@ -208,7 +208,7 @@ public class SettingsController(
     [HttpPost("video")]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Video(int crf, int maxLongEdge, string? preset, int maxrateKbps,
-        string? defaultProfile, string? encoder, string? conversionMode, bool generatePosters, bool enableHls,
+        string? defaultProfile, string? encoder, bool neverReencode, bool generatePosters, bool enableHls,
         CancellationToken ct)
     {
         // Settings are stored as one JSON blob, so a field the form doesn't send is not "unchanged", it is
@@ -229,11 +229,7 @@ public class SettingsController(
             Encoder = Enum.TryParse<VideoEncoder>(encoder, true, out var chosen) && Enum.IsDefined(chosen)
                 ? chosen
                 : current.Encoder,
-            // Same treatment as the encoder: parsed against the defined members, anything else keeps what is
-            // stored. Normalized() checks it again on the way into the DB.
-            ConversionMode = Enum.TryParse<ConversionMode>(conversionMode, true, out var mode) && Enum.IsDefined(mode)
-                ? mode
-                : current.ConversionMode,
+            ConversionMode = neverReencode ? ConversionMode.Remux : ConversionMode.Full,
             GeneratePosters = generatePosters,
             EnableHls = enableHls
         }, ct);
