@@ -349,6 +349,12 @@ namespace Boxy.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTime?>("ApiKeyCreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApiKeyHash")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedDate")
                         .HasColumnType("TEXT");
 
@@ -382,6 +388,9 @@ namespace Boxy.Data.Migrations
                         .UseCollation("NOCASE");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyHash")
+                        .IsUnique();
 
                     b.HasIndex("Email")
                         .IsUnique();

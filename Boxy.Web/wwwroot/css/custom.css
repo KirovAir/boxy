@@ -139,6 +139,11 @@ a {
     color: var(--ink-soft);
     font-size: .85rem;
     max-width: 12rem;
+    text-decoration: none;
+}
+
+.navbar__user:hover {
+    color: var(--tape-deep);
 }
 
 /* On a narrow phone the brand, an admin's Settings link, the username and Log out crowd one navbar row.

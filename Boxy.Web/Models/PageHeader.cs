@@ -29,5 +29,6 @@ public enum PageIcon
     Box,
     Share,
     File,
-    Settings
+    Settings,
+    Account
 }

@@ -40,6 +40,12 @@ public class User : AuditableEntity
     /// default; 0 = unlimited for this account. Admins are never capped.</summary>
     public long? QuotaBytes { get; set; }
 
+    /// <summary>SHA-256 of the account's API key, or null when it has none. The key itself is shown once
+    /// and never stored: it is long and random, so a plain hash is enough to make a leaked DB useless.</summary>
+    public string? ApiKeyHash { get; set; }
+
+    public DateTime? ApiKeyCreatedAt { get; set; }
+
     public ICollection<Bucket> Buckets { get; set; } = [];
 }
 
@@ -55,6 +61,7 @@ public class UserConfiguration : AuditEntityConfiguration<User>
         builder.HasIndex(e => e.Email).IsUnique();
         builder.Property(e => e.Username).UseCollation("NOCASE");
         builder.HasIndex(e => e.Username).IsUnique();
+        builder.HasIndex(e => e.ApiKeyHash).IsUnique();
         builder.Property(e => e.PasswordHash).IsRequired();
         builder.Property(e => e.Role).HasConversion<string>();
     }

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.ConfigureLogging();
@@ -58,7 +59,8 @@ await builder.RunWithLoggingAsync(async b =>
                     ctx.ShouldRenew = true;
                 }
             };
-        });
+        })
+        .AddScheme<AuthenticationSchemeOptions, ApiKeyHandler>(ApiKeys.Scheme, null);
     b.Services.AddAuthorization();
 
     // Persist Data Protection keys in the DB so the admin login cookie survives container
@@ -181,8 +183,15 @@ await builder.RunWithLoggingAsync(async b =>
         app.UseExceptionHandler("/error");
     }
 
-    // Render a friendly page (not a blank screen) for 404s etc. - e.g. a missing upload box or video.
-    app.UseStatusCodePagesWithReExecute("/status/{0}");
+    // Render a friendly page (not a blank screen) for 404s etc. - e.g. a missing upload box or video. The
+    // token API answers in JSON instead, an unknown route or a wrong method included.
+    app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/v1"),
+        api => api.UseStatusCodePages(ctx => ctx.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            error = ReasonPhrases.GetReasonPhrase(ctx.HttpContext.Response.StatusCode)
+        })));
+    app.UseWhen(ctx => !ctx.Request.Path.StartsWithSegments("/api/v1"),
+        web => web.UseStatusCodePagesWithReExecute("/status/{0}"));
 
     // Never let HTML be served stale (browser or the Cloudflare tunnel): always revalidate, so a
     // deploy's new markup - and its fresh asp-append-version asset URLs - are picked up immediately.

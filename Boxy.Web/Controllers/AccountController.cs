@@ -1,15 +1,17 @@
 using Boxy.Data;
 using Boxy.Data.Entities;
 using Boxy.Data.Extensions;
+using Boxy.Web.Extensions;
 using Boxy.Web.Models;
 using Boxy.Web.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Boxy.Web.Controllers;
 
-public class AccountController(UserService users, IDbContextFactory<AppDbContext> dbFactory) : Controller
+public class AccountController(UserService users, IDbContextFactory<AppDbContext> dbFactory, IConfiguration config) : Controller
 {
     [HttpGet("/login")]
     public async Task<IActionResult> Login(string? returnUrl = null)
@@ -91,6 +93,53 @@ public class AccountController(UserService users, IDbContextFactory<AppDbContext
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         this.FlashSuccess("Signed out.");
         return RedirectToAction("Login");
+    }
+
+    // no-store: right after generating, this page carries the key itself.
+    [Authorize]
+    [HttpGet("/account")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> Index(CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var me = await db.Users.AsNoTracking().FirstAsync(u => u.Id == User.GetUserId(), ct);
+        return View(new AccountViewModel
+        {
+            User = me,
+            BaseUrl = config.PublicBaseUrl(Request),
+            NewApiKey = TempData["ApiKey"] as string
+        });
+    }
+
+    // Generating replaces any key the account had, so it doubles as "regenerate". The key goes back to the
+    // page once through TempData and is never stored, only its hash.
+    [Authorize]
+    [HttpPost("/account/api-key")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> GenerateApiKey(CancellationToken ct)
+    {
+        var key = ApiKeys.Generate();
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var me = await db.Users.FirstAsync(u => u.Id == User.GetUserId(), ct);
+        me.ApiKeyHash = ApiKeys.Hash(key);
+        me.ApiKeyCreatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        TempData["ApiKey"] = key;
+        return RedirectToAction(nameof(Index));
+    }
+
+    [Authorize]
+    [HttpPost("/account/api-key/revoke")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RevokeApiKey(CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var me = await db.Users.FirstAsync(u => u.Id == User.GetUserId(), ct);
+        me.ApiKeyHash = null;
+        me.ApiKeyCreatedAt = null;
+        await db.SaveChangesAsync(ct);
+        this.FlashSuccess("API key revoked. Anything using it can no longer upload.");
+        return RedirectToAction(nameof(Index));
     }
 
     private async Task SignInAsync(User user, bool rememberMe)

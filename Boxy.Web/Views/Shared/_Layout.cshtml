@@ -35,7 +35,7 @@
                             <span>Settings</span>
                         </a>
                     }
-                    <span class="navbar__user text-truncate" title="@User.Identity!.Name">@User.Identity!.Name</span>
+                    <a href="/account" class="navbar__user text-truncate" title="Your account">@User.Identity!.Name</a>
                     <form method="post" action="/logout">
                         @Html.AntiForgeryToken()
                         <button type="submit" class="btn btn-sm btn-outline-primary">Log out</button>
